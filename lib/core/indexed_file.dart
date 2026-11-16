@@ -28,7 +28,6 @@ class IndexedFile {
 
   String _content;
   String? _lower;
-  String? _flat;
   String? _compactName;
   List<String>? _nameFlats;
 
@@ -36,16 +35,10 @@ class IndexedFile {
   set content(String v) {
     _content = v;
     _lower = null;
-    _flat = null;
   }
 
   /// Lower-cased content, cached for phrase matching and snippets.
   String get contentLower => _lower ??= _content.toLowerCase();
-
-  /// Lower-cased content with every run of whitespace/punctuation collapsed to one space,
-  /// so "Wild\nThings!" still matches the phrase "wild things".
-  String get contentFlat =>
-      _flat ??= ' ${contentLower.replaceAll(_nonAlnum, ' ').replaceAll(_multiSpace, ' ').trim()} ';
 
   /// File name lower-cased with separators removed: "Invoice_March-24.pdf" → "invoicemarch24pdf".
   String get compactName => _compactName ??= compact(name);
@@ -59,9 +52,8 @@ class IndexedFile {
         return plain == split ? [plain] : [plain, split];
       }();
 
-  /// True when [flatQuery] (" word word ") appears as whole words in the name or the text inside.
+  /// True when [flatQuery] (" word word ") appears as whole words in the file name.
   bool nameHasExact(String flatQuery) => nameFlats.any((n) => n.contains(flatQuery));
-  bool contentHasExact(String flatQuery) => _content.isNotEmpty && contentFlat.contains(flatQuery);
 
   FileKind get kind => kindForExt(ext);
   String get folder => p.dirname(path);
@@ -96,6 +88,5 @@ String extensionOf(String path) {
 }
 
 final _nonAlnum = RegExp(r'[^\p{L}\p{N}]+', unicode: true);
-final _multiSpace = RegExp(r' {2,}');
 final _camel = RegExp(r'(?<=\p{Ll})(?=\p{Lu})|(?<=\p{L})(?=\p{N})|(?<=\p{N})(?=\p{L})', unicode: true);
 String compact(String s) => s.toLowerCase().replaceAll(_nonAlnum, '');

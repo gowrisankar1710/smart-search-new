@@ -20,7 +20,8 @@ class SearchHit {
 }
 
 class SearchResult {
-  const SearchResult(this.hits, this.total, this.took, {this.exact = true, this.kindCounts = const {}});
+  const SearchResult(this.hits, this.total, this.took,
+      {this.exact = true, this.kindCounts = const {}, this.more = false});
   static const empty = SearchResult([], 0, Duration.zero);
   final List<SearchHit> hits;
   final int total;
@@ -31,6 +32,9 @@ class SearchResult {
 
   /// Matches per file kind, before the kind filter – drives the filter chip counts.
   final Map<FileKind, int> kindCounts;
+
+  /// True when there were too many candidates to confirm them all within the time budget.
+  final bool more;
   int get allKinds => kindCounts.values.fold(0, (a, b) => a + b);
 }
 
@@ -50,10 +54,14 @@ class SearchEngine {
   final Map<int, int> _len = {};
   int _totalLen = 0;
 
-  List<String> _vocab = const [];
-  Map<int, List<String>> _byLen = const {};
-  bool _vocabDirty = true;
-  DateTime _vocabBuilt = DateTime(2000);
+  // Sorted vocabulary for prefix completion, grown incrementally (never fully re-sorted).
+  List<String> _vocab = [];
+  final Set<String> _vocabSet = {};
+  final Set<String> _newTerms = {};
+  DateTime _vocabMerged = DateTime(2000);
+  // Typo candidates bucketed by (length, first letter) and (length, second letter).
+  final Map<int, List<String>> _byLenFirst = {};
+  final Map<int, List<String>> _byLenSecond = {};
 
   int get docCount => _ids.length;
 
@@ -74,14 +82,14 @@ class SearchEngine {
     final folderT = _folderTokens(f.folder);
     final tf = contentTf ?? (f.content.isEmpty ? const <String, int>{} : contentTermFrequencies(f.content));
     for (final t in nameT) {
-      (_name[t] ??= {})[id] = 1;
+      _post(_name, t)[id] = 1;
     }
     for (final t in folderT) {
-      (_folder[t] ??= {})[id] = 1;
+      _post(_folder, t)[id] = 1;
     }
     var len = 0;
     tf.forEach((t, c) {
-      (_content[t] ??= {})[id] = c;
+      _post(_content, t)[id] = c;
       len += c;
     });
     if (len > 0) {
@@ -89,7 +97,13 @@ class SearchEngine {
       _totalLen += len;
     }
     _keys[id] = _DocKeys(nameT.toList(), folderT.toList(), tf.keys.toList());
-    _vocabDirty = true;
+  }
+
+  Map<int, int> _post(Map<String, Map<int, int>> m, String t) {
+    final existing = m[t];
+    if (existing != null) return existing;
+    if (!_vocabSet.contains(t)) _newTerms.add(t);
+    return m[t] = {};
   }
 
   void remove(String path) {
@@ -108,8 +122,12 @@ class SearchEngine {
     _keys.clear();
     _len.clear();
     _totalLen = 0;
-    _vocabDirty = true;
-    _vocab = const [];
+    _vocab = [];
+    _vocabSet.clear();
+    _newTerms.clear();
+    _byLenFirst.clear();
+    _byLenSecond.clear();
+    _vocabMerged = DateTime(2000);
   }
 
   /// Rebuilds from the stored index; tokenising of document text happens off the UI thread.
@@ -133,8 +151,8 @@ class SearchEngine {
         upsert(part[j], contentTf: tfs[j]);
       }
     }
-    _vocabDirty = true;
-    _vocabBuilt = DateTime(2000);
+    _vocabMerged = DateTime(2000);
+    _ensureVocab(); // build now, not on the first keystroke
   }
 
   void _removeKeys(int id) {
@@ -165,20 +183,38 @@ class SearchEngine {
     return {for (final part in last) ...nameTokens(part)};
   }
 
+  /// Merges words seen since the last call into the sorted vocabulary – O(new log new + n),
+  /// throttled while indexing streams in so typing never waits on it.
   void _ensureVocab() {
-    if (!_vocabDirty) return;
-    // While indexing is streaming in, don't re-sort the vocabulary on every keystroke.
-    if (_vocab.isNotEmpty && DateTime.now().difference(_vocabBuilt) < const Duration(seconds: 4)) return;
-    final set = <String>{..._name.keys, ..._folder.keys, ..._content.keys};
-    _vocab = set.toList()..sort();
-    final by = <int, List<String>>{};
-    for (final t in _vocab) {
-      (by[t.length] ??= []).add(t);
+    if (_newTerms.isEmpty) return;
+    if (_vocab.isNotEmpty && DateTime.now().difference(_vocabMerged) < const Duration(seconds: 8)) return;
+    final fresh = _newTerms.where(_vocabSet.add).toList()..sort();
+    _newTerms.clear();
+    _vocabMerged = DateTime.now();
+    if (fresh.isEmpty) return;
+    for (final t in fresh) {
+      (_byLenFirst[_bucket(t.length, t.codeUnitAt(0))] ??= []).add(t);
+      if (t.length > 1) (_byLenSecond[_bucket(t.length, t.codeUnitAt(1))] ??= []).add(t);
     }
-    _byLen = by;
-    _vocabDirty = false;
-    _vocabBuilt = DateTime.now();
+    if (_vocab.isEmpty) {
+      _vocab = fresh;
+      return;
+    }
+    final merged = List<String>.filled(_vocab.length + fresh.length, '');
+    var i = 0, j = 0, k = 0;
+    while (i < _vocab.length && j < fresh.length) {
+      merged[k++] = _vocab[i].compareTo(fresh[j]) <= 0 ? _vocab[i++] : fresh[j++];
+    }
+    while (i < _vocab.length) {
+      merged[k++] = _vocab[i++];
+    }
+    while (j < fresh.length) {
+      merged[k++] = fresh[j++];
+    }
+    _vocab = merged;
   }
+
+  static int _bucket(int len, int unit) => len * 0x10000 + unit;
 
   // ------------------------------------------------------------------ querying
   /// What the search box uses: files containing the exact words if there are any,
@@ -187,7 +223,7 @@ class SearchEngine {
     final sw = Stopwatch()..start();
     final exact = search(query, kinds: kinds, under: under, limit: limit, exact: true);
     final r = exact.allKinds > 0 ? exact : search(query, kinds: kinds, under: under, limit: limit);
-    return SearchResult(r.hits, r.total, sw.elapsed, exact: r.exact, kindCounts: r.kindCounts);
+    return SearchResult(r.hits, r.total, sw.elapsed, exact: r.exact, kindCounts: r.kindCounts, more: r.more);
   }
 
   /// [exact]: only files whose name or inside text contains the query's exact words
@@ -252,25 +288,10 @@ class SearchEngine {
     final scored = <_Scored>[];
     var bestMatched = 0;
     final flatQ = ' ${compactSpaces(q.toLowerCase())} ';
-    final exactInContent = <int>{};
+    final phraseRe = _phraseRegex(q);
     acc.forEach((id, x) {
       final f = _docs[id];
       if (f == null || (under != null && !p.isWithin(under, f.path))) return;
-      if (exact) {
-        // Index lookups found candidates; now confirm the exact words really appear.
-        final inName = f.nameHasExact(flatQ);
-        final inContent = f.contentHasExact(flatQ);
-        if (!inName && !inContent) return;
-        if (!inName) x.name.fillRange(0, x.name.length, 0);
-        if (!inContent) {
-          x.content.fillRange(0, x.content.length, 0);
-          x.hits.clear();
-        } else {
-          exactInContent.add(id);
-          if (x.content.every((v) => v == 0)) x.content[0] = 1; // all-stop-word queries
-        }
-        if (inName && x.name.every((v) => v == 0)) x.name[0] = 4;
-      }
       var matched = 0;
       var s = 0.0;
       for (var i = 0; i < terms.length; i++) {
@@ -295,6 +316,35 @@ class SearchEngine {
     if (terms.length > 1 && bestMatched == terms.length) {
       scored.removeWhere((h) => h.matched * 2 < terms.length);
     }
+    var more = false;
+    if (exact) {
+      // Index lookups found candidates; confirm the exact words really appear, best first,
+      // within a time budget so typing stays smooth on huge indexes.
+      // An exact phrase needs every word, so files missing one can't qualify – skip them cheaply.
+      scored.removeWhere((h) => h.matched < terms.length);
+      scored.sort((a, b) => b.score.compareTo(a.score));
+      final kept = <_Scored>[];
+      final clock = Stopwatch()..start();
+      for (var i = 0; i < scored.length; i++) {
+        if (i >= 5000 || (i > 300 && clock.elapsedMilliseconds > 70)) {
+          more = true;
+          break;
+        }
+        final h = scored[i];
+        final f = _docs[h.id]!;
+        h.nameOk = f.nameHasExact(flatQ);
+        h.contentOk = f.content.isNotEmpty && phraseRe.hasMatch(f.contentLower);
+        if (!h.nameOk! && !h.contentOk!) continue;
+        if (h.contentOk!) {
+          h.score += f.source == ContentSource.ocr ? 14 : 8;
+          h.phrase = true;
+        }
+        kept.add(h);
+      }
+      scored
+        ..clear()
+        ..addAll(kept);
+    }
     final kindCounts = <FileKind, int>{};
     for (final h in scored) {
       final k = _docs[h.id]!.kind;
@@ -304,19 +354,10 @@ class SearchEngine {
     scored.sort((a, b) => b.score.compareTo(a.score));
 
     final phrase = q.toLowerCase();
-    final flatPhrase = ' ${compactSpaces(phrase)} ';
-    if (exact) {
-      for (final h in scored) {
-        if (exactInContent.contains(h.id)) {
-          h.score += _docs[h.id]!.source == ContentSource.ocr ? 14 : 8;
-          h.phrase = true;
-        }
-      }
-      scored.sort((a, b) => b.score.compareTo(a.score));
-    } else if (terms.length > 1) {
+    if (!exact && terms.length > 1) {
       for (final h in scored.take(300)) {
         final f = _docs[h.id]!;
-        if (f.content.isNotEmpty && f.contentFlat.contains(flatPhrase)) {
+        if (f.content.isNotEmpty && phraseRe.hasMatch(f.contentLower)) {
           // Exact text found inside the file/image: this is almost certainly the one.
           h.score += f.source == ContentSource.ocr ? 14 : 8;
           h.phrase = true;
@@ -326,7 +367,13 @@ class SearchEngine {
     }
 
     final hits = [for (final h in scored.take(limit)) _toHit(h, acc[h.id]!, terms, phrase)];
-    return SearchResult(hits, scored.length, sw.elapsed, exact: exact, kindCounts: kindCounts);
+    return SearchResult(hits, scored.length, sw.elapsed, exact: exact, kindCounts: kindCounts, more: more);
+  }
+
+  /// Whole-word, punctuation/line-break tolerant phrase matcher: "wild things" matches "Wild\nThings!".
+  static RegExp _phraseRegex(String q) {
+    final words = rawWords(q.toLowerCase()).map(RegExp.escape).toList();
+    return RegExp('(?<![\\p{L}\\p{N}])${words.join('[^\\p{L}\\p{N}]+')}(?![\\p{L}\\p{N}])', unicode: true);
   }
 
   Map<String, double> _expand(String term) {
@@ -334,8 +381,8 @@ class SearchEngine {
     for (final s in synonyms[term] ?? const <String>[]) {
       out.putIfAbsent(stem(s), () => 0.65);
     }
-    if (term.length >= 2 && _vocab.isNotEmpty) {
-      final w = term.length >= 4 ? 0.85 : (term.length == 3 ? 0.6 : 0.4);
+    if (term.length >= 2 && _vocab.isNotEmpty) { // one letter would expand to half the index
+      final w = term.length >= 4 ? 0.85 : (term.length == 3 ? 0.6 : 0.45);
       var i = _lowerBound(_vocab, term);
       var count = 0;
       while (i < _vocab.length && count < 60 && _vocab[i].startsWith(term)) {
@@ -349,8 +396,10 @@ class SearchEngine {
       var count = 0;
       outer:
       for (var l = term.length - maxD; l <= term.length + maxD; l++) {
-        for (final cand in _byLen[l] ?? const <String>[]) {
-          if (cand.codeUnitAt(0) != term.codeUnitAt(0) && cand.codeUnitAt(1) != term.codeUnitAt(1)) continue;
+        for (final cand in [
+          ...?_byLenFirst[_bucket(l, term.codeUnitAt(0))],
+          ...?_byLenSecond[_bucket(l, term.codeUnitAt(1))],
+        ]) {
           if (out.containsKey(cand)) continue;
           final d = boundedLevenshtein(term, cand, maxD);
           if (d <= maxD) {
@@ -366,9 +415,9 @@ class SearchEngine {
   SearchHit _toHit(_Scored h, _Acc x, List<String> terms, String phrase) {
     final f = _docs[h.id]!;
     final sources = <MatchSource>{};
-    if (x.nameSub || x.name.any((v) => v > 0)) sources.add(MatchSource.name);
+    if (h.nameOk ?? (x.nameSub || x.name.any((v) => v > 0))) sources.add(MatchSource.name);
     if (x.folder.any((v) => v > 0)) sources.add(MatchSource.folder);
-    final inContent = h.phrase || x.content.any((v) => v > 0);
+    final inContent = h.contentOk ?? (h.phrase || x.content.any((v) => v > 0));
     if (inContent) sources.add(f.source == ContentSource.ocr ? MatchSource.imageText : MatchSource.content);
 
     String? snippet;
@@ -451,6 +500,7 @@ class _Scored {
   double score;
   final int matched;
   bool phrase = false;
+  bool? nameOk, contentOk; // set by exact verification
 }
 
 final _nonWord = RegExp(r'[^\p{L}\p{N}]+', unicode: true);

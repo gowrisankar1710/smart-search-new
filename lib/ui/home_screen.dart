@@ -567,7 +567,7 @@ class _ResultSummary extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     final tt = Theme.of(context).textTheme;
     if (result.total == 0 && result.allKinds == 0) return const SizedBox(height: 12);
-    final n = formatCount(result.total);
+    final n = '${formatCount(result.total)}${result.more ? '+' : ''}';
     final files = result.total == 1 ? 'file' : 'files';
     final style = tt.bodySmall?.copyWith(color: cs.onSurfaceVariant);
     final strong = TextStyle(color: cs.onSurface, fontWeight: FontWeight.w600);

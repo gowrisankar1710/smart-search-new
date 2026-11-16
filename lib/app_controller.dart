@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
@@ -33,6 +34,9 @@ class AppController extends ChangeNotifier {
   int revision = 0;
   DateTime _lastNotify = DateTime(2000);
   DateTime _lastAutoScan = DateTime(2000);
+
+  /// Background reading uses half the CPU cores (2–4), leaving the rest for the user.
+  static final int _bgWorkers = (Platform.numberOfProcessors ~/ 2).clamp(2, 4);
 
   bool get needsOnboarding => !store.initialDone;
 
@@ -101,7 +105,7 @@ class AppController extends ChangeNotifier {
           skipPaths: Locations.skipPaths(),
           scan: true,
           analyze: readFiles,
-          maxWorkers: 1,
+          maxWorkers: _bgWorkers,
           onProgress: (pr) {
             if (pr.phase == IndexPhase.analysing) _onProgress(pr);
           },
@@ -121,7 +125,18 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
+  IndexStats? _stats;
+  DateTime _statsAt = DateTime(2000);
+
+  /// Counting 100k+ files on every repaint is wasteful – refresh at most once a second.
   IndexStats get stats {
+    final now = DateTime.now();
+    if (_stats != null && now.difference(_statsAt) < const Duration(seconds: 1)) return _stats!;
+    _statsAt = now;
+    return _stats = _computeStats();
+  }
+
+  IndexStats _computeStats() {
     var read = 0, pending = 0, failed = 0;
     for (final f in store.files.values) {
       // "Read" = fully processed: text extracted, or confirmed to hold no text
@@ -170,7 +185,7 @@ class AppController extends ChangeNotifier {
           roots: roots,
           skipPaths: const [],
           scan: false,
-          maxWorkers: 1,
+          maxWorkers: _bgWorkers,
           onProgress: _onProgress,
         );
       } finally {

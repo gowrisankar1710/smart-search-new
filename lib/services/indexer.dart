@@ -124,7 +124,7 @@ class Indexer {
     final killTimer =
         deadline == null ? null : Timer(remainingTime(), _stopAll);
     final saveTimer = deadline == null
-        ? Timer.periodic(const Duration(seconds: 30), (_) => store.save())
+        ? Timer.periodic(const Duration(minutes: 3), (_) => store.save())
         : null;
 
     final isMobile = Platform.isAndroid || Platform.isIOS;
