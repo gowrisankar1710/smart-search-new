@@ -1,0 +1,27 @@
+name: Windows build
+
+on:
+  workflow_dispatch: # "Run workflow" button on the Actions tab
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - run: flutter --version
+      - run: flutter pub get
+      - run: flutter build windows --release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: smart_file_search-windows
+          path: build/windows/x64/runner/Release/
+          if-no-files-found: error
