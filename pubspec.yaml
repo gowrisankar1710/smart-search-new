@@ -1,0 +1,28 @@
+name: smart_file_search
+description: AI-powered smart file search – finds files by name, content and text inside images.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.5.0 <4.0.0'
+  flutter: '>=3.27.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  path: ^1.9.0
+  path_provider: ^2.1.4
+  permission_handler: ^11.3.1
+  file_picker: ^8.1.2
+  open_filex: ^4.5.0
+  archive: ^3.6.1                       # DOCX / XLSX / PPTX / ODF are zip containers
+  syncfusion_flutter_pdf: ^27.1.48      # pure-Dart PDF text extraction (all platforms)
+  google_mlkit_text_recognition: ^0.14.0 # on-device OCR (Android / iOS)
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
