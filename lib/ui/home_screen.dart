@@ -673,13 +673,13 @@ class _NoResults extends StatelessWidget {
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           Icon(Icons.search_off_rounded, size: 40, color: cs.onSurfaceVariant.withValues(alpha: 0.5)),
           const SizedBox(height: 14),
-          Text('Nothing found for “$query”',
+          Text('No file contains “$query”',
               style: tt.titleMedium?.copyWith(fontWeight: FontWeight.w600), textAlign: TextAlign.center),
           const SizedBox(height: 6),
           Text(
             pending > 0
                 ? 'Still reading ${formatCount(pending)} files – results may appear shortly.'
-                : 'Try fewer or different words, another type or location, or add a folder.',
+                : 'Only exact text is matched – check the spelling, try fewer words, or add a folder.',
             textAlign: TextAlign.center,
             style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant),
           ),

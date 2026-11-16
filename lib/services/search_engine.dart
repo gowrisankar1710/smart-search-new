@@ -217,13 +217,125 @@ class SearchEngine {
   static int _bucket(int len, int unit) => len * 0x10000 + unit;
 
   // ------------------------------------------------------------------ querying
-  /// What the search box uses: files containing the exact words if there are any,
-  /// otherwise the closest matches (typos, similar words, partial words).
+  /// What the search box uses: ONLY files whose name or inside text (documents and
+  /// text read from images) contains exactly the typed words, in that order.
+  /// Case, punctuation and line breaks are ignored. Words must be whole words, except
+  /// the last one while it is still being typed ("wild th" → "wild things").
+  /// No typos, synonyms, similar words or folder-name matches.
   SearchResult find(String query, {Set<FileKind>? kinds, String? under, int limit = 150}) {
     final sw = Stopwatch()..start();
-    final exact = search(query, kinds: kinds, under: under, limit: limit, exact: true);
-    final r = exact.allKinds > 0 ? exact : search(query, kinds: kinds, under: under, limit: limit);
-    return SearchResult(r.hits, r.total, sw.elapsed, exact: r.exact, kindCounts: r.kindCounts, more: r.more);
+    final words = rawWords(query.toLowerCase()).toList();
+    if (words.isEmpty || _ids.isEmpty) return SearchResult.empty;
+    _ensureVocab();
+
+    // Is the last word finished (followed by a space/punctuation)?
+    final lastDone = RegExp(r'[^\p{L}\p{N}]$', unicode: true).hasMatch(query);
+    final full = lastDone ? words : words.sublist(0, words.length - 1);
+    final partial = lastDone ? null : words.last;
+
+    // ---- candidates from the index (cheap); the regex below is the real judge
+    Set<int>? cand;
+    void intersect(Iterable<int> ids) {
+      cand = cand == null ? ids.toSet() : (cand!..retainAll(ids.toSet()));
+    }
+
+    for (final w in full) {
+      final t = stem(w);
+      final indexable = w.length >= 2 && !stopWords.contains(w);
+      if (!indexable && !_name.containsKey(t)) continue; // let verification handle it
+      intersect({...?_name[t]?.keys, if (indexable) ...?_content[t]?.keys});
+      if (cand!.isEmpty) break;
+    }
+    if (cand == null && partial != null) {
+      // Only an unfinished word so far: every indexed word starting with it.
+      final prefix = partial.length > 3 ? stem(partial) : partial;
+      final ids = <int>{};
+      var i = _lowerBound(_vocab, prefix);
+      for (var n = 0; i < _vocab.length && n < 3000 && _vocab[i].startsWith(prefix); i++, n++) {
+        ids
+          ..addAll(_name[_vocab[i]]?.keys ?? const <int>[])
+          ..addAll(_content[_vocab[i]]?.keys ?? const <int>[]);
+      }
+      cand = ids;
+    }
+    if (cand == null || cand!.isEmpty) {
+      return SearchResult(const [], 0, sw.elapsed, exact: true);
+    }
+
+    // ---- verify: the typed words must really appear, in order
+    final body = words.map(RegExp.escape).join(r'[^\p{L}\p{N}]+');
+    final re = RegExp('(?<![\\p{L}\\p{N}])$body${partial == null ? r'(?![\p{L}\p{N}])' : ''}', unicode: true);
+    final ordered = [
+      for (final id in cand!)
+        if (_docs[id] case final f? when under == null || p.isWithin(under, f.path)) f,
+    ]..sort((a, b) => b.modifiedMs.compareTo(a.modifiedMs)); // recent first if the budget runs out
+
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final found = <(IndexedFile, double, bool, bool)>[];
+    var more = false;
+    final clock = Stopwatch()..start();
+    for (var i = 0; i < ordered.length; i++) {
+      if (i >= 20000 || (i > 500 && clock.elapsedMilliseconds > 120)) {
+        more = true;
+        break;
+      }
+      final f = ordered[i];
+      final inName = f.nameFlats.any(re.hasMatch);
+      final inContent = f.content.isNotEmpty && re.hasMatch(f.contentLower);
+      if (!inName && !inContent) continue;
+      var s = 0.0;
+      if (inName) s += 20;
+      if (inContent) {
+        s += f.source == ContentSource.ocr ? 14 : 8;
+        s += min(5, re.allMatches(f.contentLower).take(5).length).toDouble();
+      }
+      s *= 1 + 0.15 * exp(-(max(0, now - f.modifiedMs) / 86400000) / 180);
+      found.add((f, s, inName, inContent));
+    }
+
+    final kindCounts = <FileKind, int>{};
+    for (final h in found) {
+      kindCounts[h.$1.kind] = (kindCounts[h.$1.kind] ?? 0) + 1;
+    }
+    final shown = kinds == null ? found : found.where((h) => kinds.contains(h.$1.kind)).toList();
+    shown.sort((a, b) => b.$2.compareTo(a.$2));
+
+    final phrase = words.join(' ');
+    final highlights = [phrase, ...words];
+    final hits = [
+      for (final (f, s, inName, inContent) in shown.take(limit))
+        SearchHit(
+          f,
+          s,
+          {
+            if (inName) MatchSource.name,
+            if (inContent) f.source == ContentSource.ocr ? MatchSource.imageText : MatchSource.content,
+          },
+          inContent ? _snippetAt(f, re) : null,
+          highlights,
+        ),
+    ];
+    return SearchResult(hits, shown.length, sw.elapsed, exact: true, kindCounts: kindCounts, more: more);
+  }
+
+  /// Snippet around the first real match of [re].
+  static String? _snippetAt(IndexedFile f, RegExp re) {
+    final m = re.firstMatch(f.contentLower);
+    if (m == null) return null;
+    final text = f.content;
+    final best = m.start, len = m.end - m.start;
+    if (best >= text.length) return null;
+    var start = max(0, best - 60);
+    var end = min(text.length, best + len + 140);
+    if (start > 0) {
+      final sp = text.indexOf(' ', start);
+      if (sp >= 0 && sp < best) start = sp + 1;
+    }
+    if (end < text.length) {
+      final sp = text.lastIndexOf(' ', end);
+      if (sp > best + len) end = sp;
+    }
+    return '${start > 0 ? '… ' : ''}${text.substring(start, end).replaceAll('\n', ' ').trim()}${end < text.length ? ' …' : ''}';
   }
 
   /// [exact]: only files whose name or inside text contains the query's exact words

@@ -73,9 +73,12 @@ void main() {
     expect(engine.search('wild things').hits.length, greaterThan(2)); // smart mode still broad
     expect(engine.find('wild things').exact, isTrue);
     expect(engine.find('wild things').hits.length, 2);
-    final fallback = engine.find('wyld thinggs');
-    expect(fallback.exact, isFalse);
-    expect(fallback.hits, isNotEmpty);
+    // Nothing unrelated: typos and partial-word lookalikes give no results.
+    expect(engine.find('wyld thinggs').hits, isEmpty);
+    expect(engine.find('wil things ').hits, isEmpty);
+    // The word being typed can be unfinished.
+    expect(engine.find('wild th').hits.map((h) => h.file.path).toSet(), {img.path, named.path});
+    expect(engine.find('wild th').hits.firstWhere((h) => h.file.path == img.path).snippet, contains('WILD'));
   });
 
   test('phrase split across OCR lines ranks the image first', () {
