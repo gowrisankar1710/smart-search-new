@@ -37,6 +37,9 @@ target_link_libraries(${BINARY_NAME} PRIVATE flutter flutter_wrapper_app)
 target_link_libraries(${BINARY_NAME} PRIVATE "dwmapi.lib")
 # C++/WinRT: Windows.Media.Ocr, Windows.Data.Pdf, Windows.Media.Editing, Windows ML.
 target_link_libraries(${BINARY_NAME} PRIVATE "windowsapp.lib")
+# C++/WinRT uses C++20 coroutines; in C++17 mode it falls back to <experimental/coroutine>,
+# which current MSVC rejects.
+target_compile_features(${BINARY_NAME} PRIVATE cxx_std_20)
 # The WinRT projection headers are large.
 set_source_files_properties("native_analysis.cpp" PROPERTIES COMPILE_OPTIONS "/bigobj")
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")

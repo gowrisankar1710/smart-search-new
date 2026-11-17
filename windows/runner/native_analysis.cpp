@@ -357,8 +357,9 @@ EncodableValue AnalyzeImage(const std::string& path) {
   }
   try {
     stream.Seek(0);
-    const Pixels small = ReadPixels(Decode(stream, 448));
-    out[EncodableValue("labels")] = EncodableValue(TopClasses(Classifier::Instance().Classify(small), 20));
+    // ("small" is a macro in the Windows headers.)
+    const Pixels preview = ReadPixels(Decode(stream, 448));
+    out[EncodableValue("labels")] = EncodableValue(TopClasses(Classifier::Instance().Classify(preview), 20));
   } catch (...) {
   }
   return EncodableValue(out);
