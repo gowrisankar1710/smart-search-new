@@ -326,8 +326,8 @@ class AppController extends ChangeNotifier {
   bool get hasWholeDrives => roots.any((r) => r.wholeDrive);
 
   /// A full analysis of the personal folders (or [only]): finds every file and reads
-  /// every one of them (documents, images, videos) before returning, so Search opens
-  /// with them all searchable. Whole drives follow in the background.
+  /// every document and image before returning, so Search opens with them searchable.
+  /// Videos (minutes each) and whole drives follow in the background.
   /// Used on first launch, for re-analysis and new folders.
   Future<IndexSummary> analyse(
       {required void Function(IndexProgress) onProgress,
@@ -339,6 +339,7 @@ class AppController extends ChangeNotifier {
       roots: only ?? personalRoots,
       skipPaths: Locations.skipPaths(),
       onProgress: onProgress,
+      videos: false,
     );
     // Drives next: the background scan starts as soon as Search is open.
     if (only == null && hasWholeDrives) _lastAutoScan = DateTime(2000);
@@ -348,6 +349,7 @@ class AppController extends ChangeNotifier {
     revision++;
     notifyListeners();
     unawaited(store.save());
+    if (store.initialDone) startBackground(); // videos (first launch: completeOnboarding)
     return summary;
   }
 

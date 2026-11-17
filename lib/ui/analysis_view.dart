@@ -179,7 +179,7 @@ class _RunningBody extends StatelessWidget {
           const SizedBox(width: 6),
           Flexible(
             child: Text(
-              footnote ?? 'Search opens by itself once every file has been read – videos take longest.',
+              footnote ?? 'Search opens by itself once your documents and images are read. Videos are read in the background.',
               textAlign: TextAlign.center,
               style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant),
             ),

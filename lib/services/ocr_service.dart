@@ -56,7 +56,11 @@ class NativeOcrEngine implements OcrEngine {
       ? (Platform.isWindows ? 'Windows OCR + Windows ML (on-device)' : 'Apple Vision (on-device)')
       : (fallback?.name ?? 'none');
   @override
-  int get parallelism => Platform.isWindows ? 2 : 3;
+  // Windows: matches the native image pool (half the cores, 2–4). macOS: Vision runs
+  // partly on the Neural Engine / GPU; measured: 4 at once is the sweet spot.
+  int get parallelism => Platform.isWindows
+      ? (Platform.numberOfProcessors ~/ 2).clamp(2, 4)
+      : (Platform.numberOfProcessors ~/ 2).clamp(3, 4);
   @override
   bool get readsPdf => _native ?? false;
 

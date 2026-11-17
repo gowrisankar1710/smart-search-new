@@ -48,7 +48,7 @@ Future<void> openAnalysis(BuildContext context, AppController c, {List<ScanRoot>
 
 /// What the Timer screen says it waits for.
 String? analysisFootnote(AppController c) => c.hasWholeDrives
-    ? 'Search opens once your folders are read. Whole drives continue in the background.'
+    ? 'Search opens once your documents and images are read. Videos and whole drives continue in the background.'
     : null;
 
 class _SettingsBody extends StatelessWidget {
