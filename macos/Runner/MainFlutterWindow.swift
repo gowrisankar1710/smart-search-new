@@ -331,6 +331,11 @@ enum VideoAnalysis {
   // ---------------------------------------------------------------- speech
 
   private static func authorized() -> Bool {
+    // Asking without a usage description makes macOS kill the app (TCC). A build without
+    // the Info.plist key simply skips speech – on-screen text and subtitles still work.
+    guard Bundle.main.object(forInfoDictionaryKey: "NSSpeechRecognitionUsageDescription") is String else {
+      return false
+    }
     switch SFSpeechRecognizer.authorizationStatus() {
     case .authorized: return true
     case .notDetermined:
