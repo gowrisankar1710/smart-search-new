@@ -29,7 +29,7 @@ class MainFlutterWindow: NSWindow {
 /// On-device OCR through Apple's Vision framework (same engine as Live Text).
 /// Far more accurate than Tesseract on screenshots, photos and stylised text.
 enum VisionOcr {
-  private static let queue = DispatchQueue(label: "vision-ocr", qos: .utility, attributes: .concurrent)
+  private static let queue = DispatchQueue(label: "vision-ocr", qos: .userInitiated, attributes: .concurrent)
 
   static func register(with messenger: FlutterBinaryMessenger) {
     let channel = FlutterMethodChannel(name: "smart_file_search/ocr", binaryMessenger: messenger)
@@ -75,7 +75,7 @@ enum VisionOcr {
     }
     return autoreleasepool {
       guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
-            let image = CGImageSourceCreateImageAtIndex(src, 0, nil)
+            let image = decode(src)
       else { return ["text": "", "labels": [[Any]]()] }
       let handler = VNImageRequestHandler(cgImage: image, orientation: orientation(src), options: [:])
       let text = textRequest()
@@ -104,6 +104,28 @@ enum VisionOcr {
       let labels = best.sorted { $0.value > $1.value }.prefix(20).map { [$0.key, Double($0.value)] as [Any] }
       return ["text": lines.joined(separator: "\n"), "labels": Array(labels)]
     }
+  }
+
+  /// Long side Vision gets. Camera photos are 12–48 MP; text is still read reliably at
+  /// this size and the whole analysis takes a fraction of the time.
+  private static let maxSide = 2560
+
+  /// The first image, scaled down if large. The pixels keep their stored orientation
+  /// (no transform), so `orientation(src)` and `crop` still apply.
+  private static func decode(_ src: CGImageSource) -> CGImage? {
+    let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any]
+    let w = props?[kCGImagePropertyPixelWidth] as? Int ?? 0
+    let h = props?[kCGImagePropertyPixelHeight] as? Int ?? 0
+    if max(w, h) > maxSide {
+      let options: [CFString: Any] = [
+        kCGImageSourceCreateThumbnailFromImageAlways: true,
+        kCGImageSourceThumbnailMaxPixelSize: maxSide,
+        kCGImageSourceCreateThumbnailWithTransform: false,
+        kCGImageSourceShouldCacheImmediately: true,
+      ]
+      if let small = CGImageSourceCreateThumbnailAtIndex(src, 0, options as CFDictionary) { return small }
+    }
+    return CGImageSourceCreateImageAtIndex(src, 0, nil)
   }
 
   private static func orientation(_ src: CGImageSource) -> CGImagePropertyOrientation {

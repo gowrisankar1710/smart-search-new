@@ -125,6 +125,7 @@ class Indexer {
     Duration? budget,
     bool scan = true,
     bool analyze = true,
+    bool videos = true,
     int? maxWorkers,
   }) async {
     if (_running) throw StateError('Indexer already running');
@@ -432,11 +433,14 @@ class Indexer {
           _workers.addAll(spawned);
           if (timeUp()) _stopAll();
         }
-        // Videos: background runs only – one can take minutes.
-        final videoQ = deadline == null
+        // Videos: background runs only – one can take minutes. Runs that leave them out
+        // don't count them as left to read; they stay queued for the next run.
+        final readVideos = videos && deadline == null;
+        final videoQ = readVideos
             ? (store.files.values.where((f) => f.needsVideo).toList()
               ..sort((a, b) => b.modifiedMs.compareTo(a.modifiedMs)))
             : <IndexedFile>[];
+        if (!readVideos) pending -= store.files.values.where((f) => f.needsVideo).length;
         var vi = 0;
         var videoLanes = 0;
         late final Future<void> Function() videoLoop;
@@ -523,6 +527,7 @@ class Indexer {
           _enqueue = (f) {
             if (timeUp()) return false;
             if (f.needsVideo) {
+              if (!readVideos) return false; // the next run reads it
               videoQ.add(f);
               if (videoLanes == 0) lanes.add(videoLane());
             } else if (f.needsOcr) {
@@ -572,7 +577,9 @@ class Indexer {
 
     phase = IndexPhase.done;
     if (analyze) store.lastRun = DateTime.now();
-    final left = store.files.values.where((f) => f.isPending).length;
+    final left = store.files.values
+        .where((f) => f.isPending && (videos || !f.needsVideo))
+        .length;
     pending = left;
     final secs = max(0.001, analysisClock.elapsedMilliseconds / 1000);
     emit(force: true);

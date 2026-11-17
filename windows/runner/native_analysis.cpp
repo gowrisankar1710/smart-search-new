@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <condition_variable>
 #include <chrono>
 #include <cmath>
 #include <deque>
@@ -75,6 +76,51 @@ void RunInBackground(std::function<void()> work) {
     winrt::uninit_apartment();
   }).detach();
 }
+
+// Images: a few long-lived workers, so each keeps its OCR engine (created once per
+// thread) instead of building one per picture. Sized to the CPU, like the Dart side.
+class ImagePool {
+ public:
+  static ImagePool& Instance() {
+    static ImagePool* pool = new ImagePool();  // never destroyed: threads run until exit
+    return *pool;
+  }
+
+  void Post(std::function<void()> work) {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      jobs_.push_back(std::move(work));
+    }
+    ready_.notify_one();
+  }
+
+ private:
+  ImagePool() {
+    const unsigned n = (std::max)(2u, (std::min)(4u, std::thread::hardware_concurrency() / 2));
+    for (unsigned i = 0; i < n; i++) std::thread([this]() { Loop(); }).detach();
+  }
+
+  void Loop() {
+    winrt::init_apartment(winrt::apartment_type::multi_threaded);
+    for (;;) {
+      std::function<void()> work;
+      {
+        std::unique_lock<std::mutex> lock(mutex_);
+        ready_.wait(lock, [this]() { return !jobs_.empty(); });
+        work = std::move(jobs_.front());
+        jobs_.pop_front();
+      }
+      try {
+        work();
+      } catch (...) {
+      }
+    }
+  }
+
+  std::mutex mutex_;
+  std::condition_variable ready_;
+  std::deque<std::function<void()>> jobs_;
+};
 
 std::shared_ptr<Result> Share(std::unique_ptr<Result> r) {
   return std::shared_ptr<Result>(std::move(r));
@@ -142,9 +188,10 @@ winrt::Windows::Media::Ocr::OcrEngine OcrEngineForThread() {
   return engine;
 }
 
+// Camera photos are 4000+ px; text stays readable at 2600 and OCR takes about half as long.
 uint32_t OcrMaxSide() {
   try {
-    return (std::min)(winrt::Windows::Media::Ocr::OcrEngine::MaxImageDimension(), 4000u);
+    return (std::min)(winrt::Windows::Media::Ocr::OcrEngine::MaxImageDimension(), 2600u);
   } catch (...) {
     return 2600u;
   }
@@ -464,7 +511,7 @@ void HandleOcr(const flutter::MethodCall<EncodableValue>& call, std::unique_ptr<
   }
   auto r = Share(std::move(result));
   const bool full = method == "analyzeImage";
-  RunInBackground([r, p = *path, full]() {
+  ImagePool::Instance().Post([r, p = *path, full]() {
     EncodableValue value = full ? EncodableValue(EncodableMap{}) : EncodableValue(std::string());
     try {
       if (full) {
