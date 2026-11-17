@@ -12,32 +12,85 @@ IconData categoryIcon(FileCategory c) => switch (c) {
       FileCategory.videos => Icons.movie_outlined,
     };
 
-/// Search screen before typing: how far documents, images and videos are read, and
-/// which kind of file was just added.
+/// Accent per category, used for its icon and progress bar.
+Color categoryColor(FileCategory c) => switch (c) {
+      FileCategory.documents => const Color(0xFF4F5BFF),
+      FileCategory.images => const Color(0xFFF08C2E),
+      FileCategory.videos => const Color(0xFFE0457B),
+    };
+
+/// Search screen before typing: one quiet card – how far documents, images and videos
+/// are read, and which kind of file was just added.
 class ReadingProgress extends StatelessWidget {
   const ReadingProgress({super.key, required this.controller});
   final AppController controller;
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     final tt = Theme.of(context).textTheme;
     final counts = controller.categories();
     final adds = controller.recentAdds;
+    final cats = FileCategory.values;
+    final total = cats.fold<int>(0, (n, c) => n + counts[c]!.total);
+    final allDone = cats.every((c) => counts[c]!.done);
+
     return Align(
-      alignment: Alignment.topCenter,
+      alignment: const Alignment(0, -0.35),
       child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
+        padding: const EdgeInsets.all(24),
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 520),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('Reading your files', style: tt.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
-            const SizedBox(height: 10),
-            for (final c in FileCategory.values) ...[
-              _Row(category: c, count: counts[c]!),
-              const SizedBox(height: 8),
-            ],
+          constraints: const BoxConstraints(maxWidth: 560),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Container(
+              decoration: BoxDecoration(
+                color: cs.surface,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: cs.outlineVariant.withValues(alpha: 0.6)),
+                boxShadow: [
+                  BoxShadow(color: Colors.black.withValues(alpha: 0.03), blurRadius: 18, offset: const Offset(0, 6)),
+                ],
+              ),
+              child: Column(children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 14),
+                  child: Row(children: [
+                    if (allDone)
+                      const Icon(Icons.check_circle_rounded, size: 18, color: _green)
+                    else
+                      _spinner(cs.primary),
+                    const SizedBox(width: 10),
+                    Text(allDone ? 'Ready to search' : 'Reading your files',
+                        style: tt.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+                    const Spacer(),
+                    Text('${formatCount(total)} files',
+                        style: tt.labelMedium?.copyWith(color: cs.onSurfaceVariant)),
+                  ]),
+                ),
+                Divider(height: 1, color: cs.outlineVariant.withValues(alpha: 0.5)),
+                LayoutBuilder(builder: (context, box) {
+                  final tiles = [for (final c in cats) _Tile(category: c, count: counts[c]!)];
+                  if (box.maxWidth < 420) {
+                    return Column(children: [
+                      for (var i = 0; i < tiles.length; i++) ...[
+                        if (i > 0) Divider(height: 1, indent: 20, endIndent: 20, color: cs.outlineVariant.withValues(alpha: 0.4)),
+                        tiles[i],
+                      ],
+                    ]);
+                  }
+                  return IntrinsicHeight(
+                    child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                      for (var i = 0; i < tiles.length; i++) ...[
+                        if (i > 0) VerticalDivider(width: 1, indent: 16, endIndent: 16, color: cs.outlineVariant.withValues(alpha: 0.4)),
+                        Expanded(child: tiles[i]),
+                      ],
+                    ]),
+                  );
+                }),
+              ]),
+            ),
             if (adds.isNotEmpty) ...[
-              const SizedBox(height: 4),
+              const SizedBox(height: 14),
               _RecentAddsLine(adds: adds, controller: controller),
             ],
           ]),
@@ -47,8 +100,8 @@ class ReadingProgress extends StatelessWidget {
   }
 }
 
-class _Row extends StatelessWidget {
-  const _Row({required this.category, required this.count});
+class _Tile extends StatelessWidget {
+  const _Tile({required this.category, required this.count});
   final FileCategory category;
   final CategoryCount count;
 
@@ -56,59 +109,59 @@ class _Row extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final tt = Theme.of(context).textTheme;
-    final background = category == FileCategory.videos;
+    final accent = categoryColor(category);
     final none = count.total == 0;
     final done = !none && count.done;
-    final frac = count.total == 0 ? 0.0 : count.read / count.total;
+    final muted = tt.labelSmall?.copyWith(color: cs.onSurfaceVariant);
 
-    final (String status, Color color, Widget badge) = switch (()) {
-      _ when none => ('None found', cs.onSurfaceVariant, Icon(Icons.remove_rounded, size: 16, color: cs.outline)),
-      _ when done => ('All ${formatCount(count.total)} read', _green, const Icon(Icons.check_circle_rounded, size: 16, color: _green)),
-      _ => (
-          '${formatCount(count.read)} of ${formatCount(count.total)}${background ? ' · in background' : ''}',
-          cs.primary,
-          _spinner(cs.primary),
-        ),
-    };
+    final Widget status = none
+        ? Text('None yet', style: muted)
+        : done
+            ? Row(mainAxisSize: MainAxisSize.min, children: [
+                const Icon(Icons.check_rounded, size: 14, color: _green),
+                const SizedBox(width: 3),
+                Text('All read', style: muted?.copyWith(color: _green, fontWeight: FontWeight.w600)),
+              ])
+            : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(
+                  '${formatCount(count.left)} left${category == FileCategory.videos ? ' · background' : ''}',
+                  style: muted?.copyWith(color: accent, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 6),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(2),
+                  child: LinearProgressIndicator(
+                    value: count.read / count.total,
+                    minHeight: 3,
+                    color: accent,
+                    backgroundColor: accent.withValues(alpha: 0.12),
+                  ),
+                ),
+              ]);
 
-    return Container(
-      padding: const EdgeInsets.fromLTRB(12, 9, 12, 9),
-      decoration: BoxDecoration(
-        color: done ? _green.withValues(alpha: 0.07) : cs.surfaceContainerHighest.withValues(alpha: 0.45),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(children: [
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 18),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
-          Icon(categoryIcon(category), size: 18, color: done ? _green : cs.onSurfaceVariant),
+          Container(
+            width: 30,
+            height: 30,
+            decoration: BoxDecoration(color: accent.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(9)),
+            child: Icon(categoryIcon(category), size: 17, color: accent),
+          ),
           const SizedBox(width: 10),
-          Text(category.label, style: tt.labelLarge?.copyWith(fontWeight: FontWeight.w600)),
-          const Spacer(),
-          Flexible(
-            flex: 3,
-            child: Text(
-              status,
-              textAlign: TextAlign.right,
-              overflow: TextOverflow.ellipsis,
-              style: tt.labelMedium?.copyWith(color: color, fontFeatures: const [FontFeature.tabularFigures()]),
-            ),
-          ),
-          const SizedBox(width: 8),
-          badge,
+          Text(category.label, style: tt.labelLarge?.copyWith(color: cs.onSurfaceVariant)),
         ]),
-        if (!none && !done) ...[
-          const SizedBox(height: 7),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(3),
-            child: LinearProgressIndicator(value: frac, minHeight: 4, backgroundColor: cs.outlineVariant.withValues(alpha: 0.5)),
-          ),
-        ],
+        const SizedBox(height: 12),
+        Text(formatCount(count.total),
+            style: tt.headlineSmall?.copyWith(
+                fontWeight: FontWeight.w800, letterSpacing: -0.5, fontFeatures: const [FontFeature.tabularFigures()])),
+        const SizedBox(height: 4),
+        status,
       ]),
     );
   }
 }
-
-Widget _spinner(Color color) =>
-    SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 1.8, color: color));
 
 /// "New image added: beach.jpg · reading…" → "· searchable".
 class _RecentAddsLine extends StatelessWidget {
@@ -163,3 +216,6 @@ class _RecentAddsLine extends StatelessWidget {
     );
   }
 }
+
+Widget _spinner(Color color) =>
+    SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: color));
