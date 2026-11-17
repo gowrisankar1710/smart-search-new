@@ -185,6 +185,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             _TimingStrip(controller: c),
+            CategoryLine(controller: c),
             if (!showSidebar && hasQuery && _result.allKinds > 0) ...[
               const SizedBox(height: 12),
               _FilterChips(selected: _filter, countFor: _countFor, onSelected: _setFilter),
@@ -192,7 +193,7 @@ class _HomeScreenState extends State<HomeScreen> {
             if (hasQuery) _ResultSummary(result: _result, query: _query.text.trim(), searching: _searching),
             Expanded(
               child: !hasQuery
-                  ? ReadingProgress(controller: c)
+                  ? const SizedBox.shrink()
                   : _result.hits.isEmpty
                       ? (_searching
                           ? const Center(child: SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2)))
