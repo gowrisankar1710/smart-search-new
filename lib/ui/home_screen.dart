@@ -8,6 +8,7 @@ import '../app_controller.dart';
 import '../services/locations.dart';
 import '../services/search_engine.dart';
 import 'detail_panel.dart';
+import 'category_status.dart';
 import 'format.dart';
 import 'result_tile.dart';
 import 'settings_sheet.dart';
@@ -191,6 +192,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             _TimingStrip(controller: c),
+            CategoryStrip(controller: c),
             if (!showSidebar && hasQuery && _result.allKinds > 0) ...[
               const SizedBox(height: 12),
               _FilterChips(selected: _filter, countFor: _countFor, onSelected: _setFilter),

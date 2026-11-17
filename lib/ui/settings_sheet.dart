@@ -35,6 +35,7 @@ Future<void> openAnalysis(BuildContext context, AppController c, {List<ScanRoot>
           start: (onProgress) => c.analyse(onProgress: onProgress, only: only),
           previous: previous,
           footnote: only == null ? analysisFootnote(c) : null,
+          categories: () => c.categories(within: only ?? c.personalRoots),
           onContinue: () {
             Navigator.of(ctx).pop();
             c.startBackground();

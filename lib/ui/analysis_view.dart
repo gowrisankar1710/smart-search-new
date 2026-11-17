@@ -4,7 +4,9 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../app_controller.dart';
+import '../core/file_types.dart';
 import '../services/indexer.dart';
+import 'category_status.dart';
 import 'format.dart';
 
 const _indigo = Color(0xFF4F5BFF);
@@ -13,7 +15,8 @@ const _green = Color(0xFF22B573);
 
 /// Live view of a time-boxed analysis: countdown ring, step tracker, live counters, summary.
 class AnalysisView extends StatefulWidget {
-  const AnalysisView({super.key, required this.start, required this.onContinue, this.previous, this.footnote});
+  const AnalysisView(
+      {super.key, required this.start, required this.onContinue, this.previous, this.footnote, this.categories});
 
   final Future<IndexSummary> Function(void Function(IndexProgress) onProgress) start;
   final VoidCallback onContinue;
@@ -23,6 +26,9 @@ class AnalysisView extends StatefulWidget {
 
   /// Replaces the default line under the running analysis.
   final String? footnote;
+
+  /// Documents / images / videos in the folders being read, and how many are left.
+  final Map<FileCategory, CategoryCount> Function()? categories;
 
   @override
   State<AnalysisView> createState() => _AnalysisViewState();
@@ -68,8 +74,13 @@ class _AnalysisViewState extends State<AnalysisView> {
     final child = _error != null
         ? _ErrorBody(error: _error!, onContinue: widget.onContinue)
         : _summary != null
-            ? _DoneBody(summary: _summary!, previous: widget.previous, onContinue: widget.onContinue)
-            : _RunningBody(progress: _p, elapsed: _clock.elapsed, footnote: widget.footnote);
+            ? _DoneBody(
+                summary: _summary!,
+                previous: widget.previous,
+                onContinue: widget.onContinue,
+                categories: widget.categories?.call())
+            : _RunningBody(
+                progress: _p, elapsed: _clock.elapsed, footnote: widget.footnote, categories: widget.categories?.call());
     return _Backdrop(
       child: Center(
         child: SingleChildScrollView(
@@ -97,10 +108,11 @@ class _AnalysisViewState extends State<AnalysisView> {
 // ------------------------------------------------------------------ running
 
 class _RunningBody extends StatelessWidget {
-  const _RunningBody({required this.progress, required this.elapsed, this.footnote});
+  const _RunningBody({required this.progress, required this.elapsed, this.footnote, this.categories});
   final IndexProgress? progress;
   final Duration elapsed;
   final String? footnote;
+  final Map<FileCategory, CategoryCount>? categories;
 
   @override
   Widget build(BuildContext context) {
@@ -160,6 +172,10 @@ class _RunningBody extends StatelessWidget {
         const SizedBox(height: 24),
         _Steps(active: step),
         const SizedBox(height: 24),
+        if (categories != null) ...[
+          CategoryRows(counts: categories!, finding: step == 0),
+          const SizedBox(height: 16),
+        ],
         Row(children: [
           _Stat(icon: Icons.folder_copy_outlined, label: 'Files found', value: p?.found ?? 0),
           const SizedBox(width: 10),
@@ -441,7 +457,8 @@ class _CurrentFile extends StatelessWidget {
 
 /// Everything is read: shows the summary briefly, then opens Search by itself.
 class _DoneBody extends StatefulWidget {
-  const _DoneBody({required this.summary, required this.onContinue, this.previous});
+  const _DoneBody({required this.summary, required this.onContinue, this.previous, this.categories});
+  final Map<FileCategory, CategoryCount>? categories;
   final IndexSummary summary;
   final TimingSnapshot? previous;
   final VoidCallback onContinue;
@@ -513,10 +530,18 @@ class _DoneBodyState extends State<_DoneBody> {
         const SizedBox(height: 20),
         Text('Ready to search', style: tt.headlineSmall?.copyWith(fontWeight: FontWeight.w800, letterSpacing: -0.4)),
         const SizedBox(height: 6),
-        Text('Every file read in $secs seconds', style: tt.bodyMedium?.copyWith(color: cs.onSurfaceVariant)),
+        Text(
+            widget.categories == null
+                ? 'Every file read in $secs seconds'
+                : 'Documents and images read in $secs seconds',
+            style: tt.bodyMedium?.copyWith(color: cs.onSurfaceVariant)),
         const SizedBox(height: 24),
         const _Steps(active: 3),
         const SizedBox(height: 22),
+        if (widget.categories != null) ...[
+          CategoryRows(counts: widget.categories!, finding: false),
+          const SizedBox(height: 12),
+        ],
         GridView.count(
           crossAxisCount: 2,
           shrinkWrap: true,

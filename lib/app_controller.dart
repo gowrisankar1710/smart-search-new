@@ -22,6 +22,23 @@ class IndexStats {
   final int total, read, pending, failed;
 }
 
+/// Files of one category and how many of them still wait to be read.
+class CategoryCount {
+  int total = 0;
+  int left = 0;
+  int get read => total - left;
+  bool get done => left == 0;
+}
+
+/// A file that appeared on disk while the app was open.
+class RecentAdd {
+  RecentAdd(this.path, this.category, this.at);
+  final String path;
+  final FileCategory category;
+  final DateTime at;
+  String get name => p.basename(path);
+}
+
 /// The numbers shown by the Search screen's timing strip and the Timer screen.
 class TimingSnapshot {
   const TimingSnapshot({this.indexTime, this.indexAt, this.waitBeforeSearch, this.searchTook});
@@ -233,6 +250,13 @@ class AppController extends ChangeNotifier {
       if (!(hasExtractableText(f.ext) || isOcrCandidate(f.ext) || isVideoCandidate(f.ext))) {
         f.status = IndexStatus.nameOnly;
       }
+      final cat = categoryOf(f.ext);
+      if (old == null && cat != null) {
+        _recentAdds
+          ..removeWhere((a) => a.path == path)
+          ..insert(0, RecentAdd(path, cat, now));
+        if (_recentAdds.length > 50) _recentAdds.removeLast();
+      }
       store.files[path] = f;
       engine.upsert(f, contentTf: const {});
       changed = true;
@@ -290,6 +314,43 @@ class AppController extends ChangeNotifier {
       unawaited(store.save());
     });
     notifyListeners();
+  }
+
+  final List<RecentAdd> _recentAdds = [];
+  static const _recentWindow = Duration(minutes: 2);
+
+  /// Files added in the last couple of minutes, newest first.
+  List<RecentAdd> get recentAdds {
+    final now = DateTime.now();
+    _recentAdds.removeWhere((a) => now.difference(a.at) > _recentWindow || !store.files.containsKey(a.path));
+    return List.unmodifiable(_recentAdds);
+  }
+
+  /// True once a recently added file's content is searchable (or it holds none).
+  bool isRead(String path) => !(store.files[path]?.isPending ?? false);
+
+  final Map<String, (DateTime, Map<FileCategory, CategoryCount>)> _categories = {};
+
+  /// Per category: how many files there are and how many still wait to be read –
+  /// everywhere, or only under [within] (the folders a Timer run reads).
+  Map<FileCategory, CategoryCount> categories({List<ScanRoot>? within}) {
+    final key = within == null ? '' : within.map((r) => r.path).join('|');
+    final now = DateTime.now();
+    final cached = _categories[key];
+    if (cached != null && now.difference(cached.$1) < const Duration(milliseconds: 700)) return cached.$2;
+    final out = {for (final c in FileCategory.values) c: CategoryCount()};
+    // Plain prefix test: this runs over every file several times a second.
+    final prefixes = within?.map((r) => r.path.endsWith(p.separator) ? r.path : r.path + p.separator).toList();
+    for (final f in store.files.values) {
+      final cat = categoryOf(f.ext);
+      if (cat == null) continue;
+      if (prefixes != null && !prefixes.any(f.path.startsWith)) continue;
+      final c = out[cat]!;
+      c.total++;
+      if (f.isPending) c.left++;
+    }
+    _categories[key] = (now, out);
+    return out;
   }
 
   IndexStats? _stats;

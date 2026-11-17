@@ -77,3 +77,23 @@ int maxExtractBytes(String ext) {
   if (_legacyBinaryExt.contains(ext)) return 20 << 20;
   return 50 << 20; // text files: only the first 1 MB is read anyway
 }
+
+/// What kind of content a file holds, as the app reads it: documents first, images
+/// next (text and objects inside them), videos last (in the background).
+enum FileCategory {
+  documents('Documents', 'document'),
+  images('Images', 'image'),
+  videos('Videos', 'video');
+
+  const FileCategory(this.label, this.singular);
+  final String label;
+  final String singular;
+}
+
+/// The category whose content is read for [ext]; null for files known by name only.
+FileCategory? categoryOf(String ext) {
+  if (isVideoCandidate(ext)) return FileCategory.videos;
+  if (isOcrCandidate(ext)) return FileCategory.images;
+  if (hasExtractableText(ext)) return FileCategory.documents;
+  return null;
+}
