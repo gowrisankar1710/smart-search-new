@@ -6,8 +6,11 @@ import 'package:open_filex/open_filex.dart';
 import 'package:path/path.dart' as p;
 
 import '../services/search_engine.dart';
+import '../core/object_terms.dart';
+import '../services/video_service.dart';
 import 'format.dart';
 import 'theme.dart';
+import 'video_player_view.dart';
 
 class ResultTile extends StatefulWidget {
   const ResultTile({
@@ -43,6 +46,8 @@ class _ResultTileState extends State<ResultTile> {
     );
     final inImage = hit.sources.contains(MatchSource.imageText);
     final inFile = hit.sources.contains(MatchSource.content);
+    final moment = hit.firstMoment;
+    final objects = hit.objects;
     final muted = tt.bodySmall?.copyWith(color: cs.onSurfaceVariant);
 
     return Padding(
@@ -65,8 +70,8 @@ class _ResultTileState extends State<ResultTile> {
             borderRadius: BorderRadius.circular(12),
             clipBehavior: Clip.antiAlias,
             child: InkWell(
-              onTap: widget.onSelect ?? () => openFile(context, f.path),
-              onDoubleTap: widget.onSelect == null ? null : () => openFile(context, f.path),
+              onTap: widget.onSelect ?? () => openHit(context, hit),
+              onDoubleTap: widget.onSelect == null ? null : () => openHit(context, hit),
               onLongPress: () => showActions(context, f.path),
               onSecondaryTap: () => showActions(context, f.path),
               hoverColor: Colors.transparent,
@@ -99,7 +104,22 @@ class _ResultTileState extends State<ResultTile> {
                           child: Text(friendlyPath(f.folder),
                               maxLines: 1, overflow: TextOverflow.ellipsis, style: muted),
                         ),
-                        if (inImage || inFile) ...[
+                        if (moment != null) ...[
+                          const SizedBox(width: 8),
+                          _MatchLabel(
+                            hit.moments.length > 1
+                                ? 'In video at ${formatTimestamp(moment.at)} +${hit.moments.length - 1}'
+                                : 'In video at ${formatTimestamp(moment.at)}',
+                            Icons.play_circle_outline_rounded,
+                            onTap: () => playVideoAt(context, hit, moment),
+                          ),
+                        ] else if (objects.isNotEmpty && !inImage) ...[
+                          const SizedBox(width: 8),
+                          _MatchLabel(
+                            'Shows ${objects.take(2).map((l) => labelName(l.id)).join(', ')}',
+                            Icons.center_focus_strong_rounded,
+                          ),
+                        ] else if (inImage || inFile) ...[
                           const SizedBox(width: 8),
                           _MatchLabel(
                             inImage ? 'Text in image' : 'Inside file',
@@ -169,13 +189,23 @@ class _Thumb extends StatelessWidget {
 }
 
 class _MatchLabel extends StatelessWidget {
-  const _MatchLabel(this.label, this.icon);
+  const _MatchLabel(this.label, this.icon, {this.onTap});
   final String label;
   final IconData icon;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final chip = _chip(cs);
+    if (onTap == null) return chip;
+    return Tooltip(
+      message: 'Play from here',
+      child: MouseRegion(cursor: SystemMouseCursors.click, child: GestureDetector(onTap: onTap, child: chip)),
+    );
+  }
+
+  Widget _chip(ColorScheme cs) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
       decoration: BoxDecoration(

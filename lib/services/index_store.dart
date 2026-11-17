@@ -14,7 +14,17 @@ class IndexStore {
   bool initialDone = false;
   bool backgroundEnabled = true;
   int ocrVersion = 0;
+  int contentVersion = 0;
   DateTime? lastRun;
+
+  /// How long the last time-boxed indexing pass took, and when it ran.
+  Duration? lastIndexTime;
+  DateTime? lastIndexAt;
+
+  /// The last visit to the Search screen: time from opening it until a search began,
+  /// and how long that search took.
+  Duration? lastWaitBeforeSearch;
+  Duration? lastSearchTook;
 
   File? _file;
   Future<void> _saving = Future.value();
@@ -29,8 +39,15 @@ class IndexStore {
       initialDone = data['initialDone'] as bool? ?? false;
       backgroundEnabled = data['bg'] as bool? ?? true;
       ocrVersion = data['ocr'] as int? ?? 0;
+      contentVersion = data['cv'] as int? ?? 0;
       final last = data['last'] as int?;
       lastRun = last == null ? null : DateTime.fromMillisecondsSinceEpoch(last);
+      final t = (data['timing'] as Map?)?.cast<String, dynamic>() ?? const {};
+      Duration? ms(String k) => t[k] == null ? null : Duration(milliseconds: t[k] as int);
+      lastIndexTime = ms('index');
+      lastWaitBeforeSearch = ms('wait');
+      lastSearchTook = ms('took');
+      lastIndexAt = t['indexAt'] == null ? null : DateTime.fromMillisecondsSinceEpoch(t['indexAt'] as int);
       extraRoots
         ..clear()
         ..addAll(((data['extra'] as List?) ?? const []).cast<String>());
@@ -57,7 +74,14 @@ class IndexStore {
       'initialDone': initialDone,
       'bg': backgroundEnabled,
       'ocr': ocrVersion,
+      'cv': contentVersion,
       'last': lastRun?.millisecondsSinceEpoch,
+      'timing': {
+        if (lastIndexTime != null) 'index': lastIndexTime!.inMilliseconds,
+        if (lastIndexAt != null) 'indexAt': lastIndexAt!.millisecondsSinceEpoch,
+        if (lastWaitBeforeSearch != null) 'wait': lastWaitBeforeSearch!.inMilliseconds,
+        if (lastSearchTook != null) 'took': lastSearchTook!.inMilliseconds,
+      },
       'extra': List<String>.of(extraRoots),
       'files': [for (final f in files.values) f.toJson()],
     };

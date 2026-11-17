@@ -25,6 +25,15 @@ String formatDate(DateTime d) {
   return '${d.day} ${_months[d.month - 1]} ${d.year}';
 }
 
+/// "12.4 s", "1 min 05 s".
+String formatSeconds(Duration d) {
+  if (d.inSeconds < 60) return '${(d.inMilliseconds / 1000).toStringAsFixed(1)} s';
+  return '${d.inMinutes} min ${(d.inSeconds % 60).toString().padLeft(2, '0')} s';
+}
+
+/// "12 ms" below a second, otherwise seconds.
+String formatMillis(Duration d) => d.inMilliseconds < 1000 ? '${d.inMilliseconds} ms' : formatSeconds(d);
+
 String formatCount(int n) {
   final s = n.toString();
   final b = StringBuffer();

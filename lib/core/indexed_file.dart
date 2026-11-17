@@ -4,7 +4,31 @@ import 'file_types.dart';
 
 enum IndexStatus { pending, indexed, nameOnly, failed }
 
-enum ContentSource { none, text, ocr }
+/// `video`: text read from a video (on-screen text, speech, subtitles) with timestamps.
+/// New values go at the end – the index stores the position.
+enum ContentSource { none, text, ocr, video }
+
+/// Something the image classifier sees in a picture ("sari", "bird", "rocks"), 0–1 sure.
+class ImageLabel {
+  const ImageLabel(this.id, this.confidence);
+  final String id;
+  final double confidence;
+
+  List<Object> toJson() => [id, double.parse(confidence.toStringAsFixed(2))];
+  factory ImageLabel.fromJson(List<dynamic> j) => ImageLabel(j[0] as String, (j[1] as num).toDouble());
+}
+
+/// A piece of text found in a video, starting [seconds] into it.
+class VideoSegment {
+  const VideoSegment(this.seconds, this.text);
+  final double seconds;
+  final String text;
+
+  Duration get at => Duration(milliseconds: (seconds * 1000).round());
+
+  List<Object> toJson() => [double.parse(seconds.toStringAsFixed(2)), text];
+  factory VideoSegment.fromJson(List<dynamic> j) => VideoSegment((j[0] as num).toDouble(), j[1] as String);
+}
 
 class IndexedFile {
   IndexedFile({
@@ -14,9 +38,13 @@ class IndexedFile {
     this.status = IndexStatus.pending,
     this.source = ContentSource.none,
     String content = '',
+    List<VideoSegment> segments = const [],
+    this.labels = const [],
   })  : name = p.basename(path),
         ext = extensionOf(path),
-        _content = content;
+        _content = content {
+    if (segments.isNotEmpty) this.segments = segments;
+  }
 
   final String path;
   final String name;
@@ -26,10 +54,12 @@ class IndexedFile {
   IndexStatus status;
   ContentSource source;
 
+  /// Images: what the picture shows (objects, scenes, clothing), most certain first.
+  List<ImageLabel> labels;
+
   String _content;
   String? _lower;
-  String? _compactName;
-  List<String>? _nameFlats;
+  String? _nameLower;
 
   String get content => _content;
   set content(String v) {
@@ -40,28 +70,53 @@ class IndexedFile {
   /// Lower-cased content, cached for phrase matching and snippets.
   String get contentLower => _lower ??= _content.toLowerCase();
 
-  /// File name lower-cased with separators removed: "Invoice_March-24.pdf" → "invoicemarch24pdf".
-  String get compactName => _compactName ??= compact(name);
+  List<VideoSegment> _segments = const [];
+  List<int> _segStarts = const [];
 
-  /// File name as space-separated words, plain and with camelCase / digit
-  /// boundaries split: "InvoiceMarch2024.pdf" → " invoicemarch2024 pdf ", " invoice march 2024 pdf ".
-  List<String> get nameFlats => _nameFlats ??= () {
-        final words = name.split(_nonAlnum).where((w) => w.isNotEmpty).toList();
-        final plain = ' ${words.join(' ').toLowerCase()} ';
-        final split = ' ${words.expand((w) => w.split(_camel)).join(' ').toLowerCase()} ';
-        return plain == split ? [plain] : [plain, split];
-      }();
+  /// Timestamped text of a video, in time order. Setting it also sets [content]
+  /// (segments joined by line breaks), so search works on videos like on any file.
+  List<VideoSegment> get segments => _segments;
+  set segments(List<VideoSegment> v) {
+    _segments = List.unmodifiable(v);
+    final starts = <int>[];
+    final b = StringBuffer();
+    for (final s in _segments) {
+      if (b.isNotEmpty) b.write('\n');
+      starts.add(b.length);
+      b.write(s.text);
+    }
+    _segStarts = starts;
+    content = b.toString();
+  }
 
-  /// True when [flatQuery] (" word word ") appears as whole words in the file name.
-  bool nameHasExact(String flatQuery) => nameFlats.any((n) => n.contains(flatQuery));
+  /// The video moment whose text contains character [offset] of [content].
+  VideoSegment? segmentAt(int offset) {
+    if (_segments.isEmpty || offset < 0) return null;
+    var lo = 0, hi = _segStarts.length - 1;
+    while (lo < hi) {
+      final mid = (lo + hi + 1) >> 1;
+      if (_segStarts[mid] <= offset) {
+        lo = mid;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    return _segments[lo];
+  }
+
+  String get nameLower => _nameLower ??= name.toLowerCase();
 
   FileKind get kind => kindForExt(ext);
   String get folder => p.dirname(path);
   DateTime get modified => DateTime.fromMillisecondsSinceEpoch(modifiedMs);
 
-  bool get needsText => status == IndexStatus.pending && hasExtractableText(ext);
-  bool get needsOcr => status == IndexStatus.pending && isOcrCandidate(ext);
-  bool get isPending => needsText || needsOcr;
+  /// A PDF without a text layer (scanned / image-only): its pages are read with OCR.
+  bool get isScannedPdf => ext == 'pdf' && source == ContentSource.ocr;
+
+  bool get needsText => status == IndexStatus.pending && hasExtractableText(ext) && !isScannedPdf;
+  bool get needsOcr => status == IndexStatus.pending && (isOcrCandidate(ext) || isScannedPdf);
+  bool get needsVideo => status == IndexStatus.pending && isVideoCandidate(ext);
+  bool get isPending => needsText || needsOcr || needsVideo;
 
   Map<String, Object> toJson() => {
         'p': path,
@@ -69,7 +124,11 @@ class IndexedFile {
         'm': modifiedMs,
         'st': status.index,
         'src': source.index,
-        if (_content.isNotEmpty) 'c': _content,
+        if (labels.isNotEmpty) 'lb': [for (final l in labels) l.toJson()],
+        if (_segments.isNotEmpty)
+          'vs': [for (final s in _segments) s.toJson()]
+        else if (_content.isNotEmpty)
+          'c': _content,
       };
 
   factory IndexedFile.fromJson(Map<String, dynamic> j) => IndexedFile(
@@ -79,6 +138,12 @@ class IndexedFile {
         status: IndexStatus.values[j['st'] as int],
         source: ContentSource.values[j['src'] as int],
         content: (j['c'] as String?) ?? '',
+        segments: [
+          for (final s in (j['vs'] as List?) ?? const []) VideoSegment.fromJson(s as List),
+        ],
+        labels: [
+          for (final l in (j['lb'] as List?) ?? const []) ImageLabel.fromJson(l as List),
+        ],
       );
 }
 
@@ -88,5 +153,4 @@ String extensionOf(String path) {
 }
 
 final _nonAlnum = RegExp(r'[^\p{L}\p{N}]+', unicode: true);
-final _camel = RegExp(r'(?<=\p{Ll})(?=\p{Lu})|(?<=\p{L})(?=\p{N})|(?<=\p{N})(?=\p{L})', unicode: true);
 String compact(String s) => s.toLowerCase().replaceAll(_nonAlnum, '');

@@ -27,7 +27,24 @@ void main() {
 
     expect(store.files[image.path]?.status, IndexStatus.indexed);
     expect(store.files[image.path]?.source, ContentSource.ocr);
-    expect(engine.search('receipt').hits.single.file.path, image.path);
+    expect(engine.find('receipt').hits.single.file.path, image.path);
+  });
+
+  test('PDF without a text layer is read with OCR', () async {
+    final dir = await Directory.systemTemp.createTemp('scan_pdf');
+    addTearDown(() => dir.delete(recursive: true));
+    final pdf = File('${dir.path}/GC100.pdf')..writeAsBytesSync([37, 80, 68, 70, 0, 1, 2, 3]); // no text layer
+    final store = IndexStore();
+    final engine = SearchEngine();
+    await Indexer(store, engine, _FakeOcrEngine()).run(
+      roots: [ScanRoot(dir.path, 'test')],
+      skipPaths: const [],
+      onProgress: (_) {},
+    );
+    final f = store.files[pdf.path]!;
+    expect(f.status, IndexStatus.indexed);
+    expect(f.source, ContentSource.ocr);
+    expect(engine.find('receipt total').hits.single.file.path, pdf.path);
   });
 
   test('every file ends up read: unknown text formats sniffed, binaries settled', () async {
@@ -47,8 +64,8 @@ void main() {
     );
 
     expect(store.files.values.where((f) => f.isPending), isEmpty);
-    expect(engine.search('galaxy').hits.single.file.path, arb.path);
-    expect(engine.search('compile').hits.single.file.path, mk.path);
+    expect(engine.find('galaxy').hits.single.file.path, arb.path);
+    expect(engine.find('compile').hits.single.file.path, mk.path);
     expect(store.files[blob.path]!.content, isEmpty);
   });
 
@@ -67,18 +84,42 @@ void main() {
     for (final f in [img, named, loose, typo, folder]) {
       engine.upsert(f);
     }
-    final paths = engine.search('wild things', exact: true).hits.map((h) => h.file.path).toSet();
-    expect(paths, {img.path, named.path});
-    expect(engine.search('wild things', exact: true).hits.first.file.path, img.path);
-    expect(engine.search('wild things').hits.length, greaterThan(2)); // smart mode still broad
-    expect(engine.find('wild things').exact, isTrue);
-    expect(engine.find('wild things').hits.length, 2);
-    // Nothing unrelated: typos and partial-word lookalikes give no results.
-    expect(engine.find('wyld thinggs').hits, isEmpty);
-    expect(engine.find('wil things ').hits, isEmpty);
-    // The word being typed can be unfinished.
-    expect(engine.find('wild th').hits.map((h) => h.file.path).toSet(), {img.path, named.path});
+    Set<String> paths(String q) => engine.find(q).hits.map((h) => h.file.path).toSet();
+    expect(paths('wild things'), {img.path, named.path});
+    // Plain text: case doesn't matter, and the text may sit inside a word.
+    expect(paths('WILD THINGS'), {img.path, named.path});
+    expect(paths('ild thin'), {img.path, named.path});
+    expect(paths('poster'), {named.path});
+    expect(paths('oster'), {named.path});
+    // Nothing unrelated: typos give no results.
+    expect(paths('wyld thinggs'), isEmpty);
+    expect(paths('wild animals'), {loose.path});
+    expect(paths('wild th'), {img.path, named.path});
     expect(engine.find('wild th').hits.firstWhere((h) => h.file.path == img.path).snippet, contains('WILD'));
+  });
+
+  test('multi-word phrases are found even among thousands of single-word matches', () {
+    final engine = SearchEngine();
+    IndexedFile doc(String path, String text, int ms) => IndexedFile(path: path, size: 1, modifiedMs: ms)
+      ..content = text
+      ..source = ContentSource.text
+      ..status = IndexStatus.indexed;
+    // 5,000 newer files that each contain only one of the words.
+    for (var i = 0; i < 5000; i++) {
+      engine.upsert(doc('/n/d$i.txt', i.isEven ? 'many years ago, filler $i' : 'chapter 100 filler $i', 1000000 + i));
+    }
+    final target = doc('/old/history.txt', 'The company celebrated 100 Years of service.', 1);
+    final pdfGlued = doc('/old/scan.pdf', 'celebrating 100years together', 1);
+    final wrapped = doc('/old/wrap.txt', 'over the last 100\nyears we grew', 1);
+    for (final f in [target, pdfGlued, wrapped]) {
+      engine.upsert(f);
+    }
+    final paths = engine.find('100 years').hits.map((h) => h.file.path).toSet();
+    expect(paths, {target.path, pdfGlued.path, wrapped.path});
+    expect(engine.find('celebrated 100 years of').hits.single.file.path, target.path);
+    expect(engine.find('100 years of service').hits.single.file.path, target.path);
+    expect(engine.find('100 year').hits.length, 3); // last word still being typed
+    expect(engine.find('100 months').hits, isEmpty);
   });
 
   test('phrase split across OCR lines ranks the image first', () {
@@ -93,7 +134,7 @@ void main() {
       ..status = IndexStatus.indexed;
     engine.upsert(doc);
     engine.upsert(img);
-    final hits = engine.search('wild things').hits;
+    final hits = engine.find('wild things').hits;
     expect(hits.first.file.path, img.path);
     expect(hits.first.snippet, isNotNull);
   });
@@ -107,8 +148,15 @@ class _FakeOcrEngine implements OcrEngine {
   int get parallelism => 1;
 
   @override
+  bool get readsPdf => true;
+
+  @override
   Future<bool> isAvailable() async => true;
 
   @override
   Future<String> recognize(String path) async => 'receipt total 42';
+
+  @override
+  Future<ImageReading> analyzeImage(String path) async =>
+      const ImageReading('receipt total 42', [ImageLabel('document', 0.9)]);
 }

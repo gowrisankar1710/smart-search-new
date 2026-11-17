@@ -10,7 +10,7 @@ import 'package:syncfusion_flutter_pdf/pdf.dart';
 
 import '../core/file_types.dart';
 
-const _maxPdfPages = 40;
+const _maxPdfPages = 300;
 const _maxPlainBytes = 1 << 20; // 1 MB of a text file is plenty for search
 
 /// Returns raw extracted text, or null when the type has no extractor.
@@ -75,7 +75,7 @@ String _zip(File f, bool Function(String name) want, {String Function(String nam
     if (!entry.isFile || !want(entry.name)) continue;
     final xml = utf8.decode(entry.content as List<int>, allowMalformed: true);
     buf.writeln(transform != null ? transform(entry.name, xml) : xmlToText(xml));
-    if (buf.length > 120000) break;
+    if (buf.length > 600000) break;
   }
   return buf.toString();
 }
@@ -90,7 +90,25 @@ String xmlToText(String xml) => decodeEntities(
       xml.replaceAll(_script, ' ').replaceAll(_odfSpace, ' ').replaceAll(_blockEnd, '\n').replaceAll(_tag, ''),
     );
 
-String _inlineCellText(String sheetXml) => decodeEntities(_inlineT.allMatches(sheetXml).map((m) => m.group(1)).join(' '));
+/// Inline strings plus typed values (numbers, dates, formula results). Shared-string cells
+/// (t="s") only hold an index – their text comes from sharedStrings.xml.
+String _inlineCellText(String sheetXml) {
+  final out = StringBuffer();
+  for (final m in _inlineT.allMatches(sheetXml)) {
+    out
+      ..write(m.group(1))
+      ..write(' ');
+  }
+  for (final m in _cellValue.allMatches(sheetXml)) {
+    if (m.group(1)!.contains('t="s"')) continue;
+    out
+      ..write(m.group(2))
+      ..write(' ');
+  }
+  return decodeEntities(out.toString());
+}
+
+final _cellValue = RegExp(r'<c\b([^>]*)>(?:<f[^>]*>[^<]*</f>|<f[^>]*/>)?<v>([^<]*)</v>');
 
 final _numEntity = RegExp(r'&#(x?)([0-9a-fA-F]+);');
 String decodeEntities(String s) => s

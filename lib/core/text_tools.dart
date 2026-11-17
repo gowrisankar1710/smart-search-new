@@ -4,7 +4,8 @@ library;
 
 import 'dart:math';
 
-const int kMaxIndexedChars = 40000;
+/// Text kept per file. Large enough for long documents; anything beyond can't be searched.
+const int kMaxIndexedChars = 200000;
 
 final _splitter = RegExp(r'[^\p{L}\p{N}]+', unicode: true);
 final _camel = RegExp(r'(?<=\p{Ll})(?=\p{Lu})|(?<=\p{L})(?=\p{N})|(?<=\p{N})(?=\p{L})', unicode: true);
@@ -56,14 +57,13 @@ Set<String> nameTokens(String name) {
   return out;
 }
 
+/// Every word of the text, lower-cased and unmodified (no stemming, nothing dropped
+/// except single characters and absurdly long runs) – the search narrows candidates with it.
 Map<String, int> contentTermFrequencies(String text) {
   final tf = <String, int>{};
   for (final w in rawWords(text.toLowerCase())) {
-    if (w.length < 2 || w.length > 40) continue;
-    if (stopWords.contains(w)) continue;
-    if (w.length > 12 && isDigits(w)) continue; // ids / hashes
-    final t = stem(w);
-    tf[t] = (tf[t] ?? 0) + 1;
+    if (w.length < 2 || w.length > 64) continue;
+    tf[w] = (tf[w] ?? 0) + 1;
   }
   return tf;
 }

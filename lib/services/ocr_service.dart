@@ -5,16 +5,33 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 
+import '../core/indexed_file.dart';
+
+/// What was read from one image: its text and what it shows.
+class ImageReading {
+  const ImageReading(this.text, [this.labels = const []]);
+  final String text;
+  final List<ImageLabel> labels;
+}
+
 /// Reads text embedded in images.
 abstract class OcrEngine {
   String get name;
   int get parallelism;
+
+  /// Can read scanned / image-only PDFs (renders pages, then OCR).
+  bool get readsPdf;
   Future<bool> isAvailable();
   Future<String> recognize(String path);
+
+  /// Text plus objects/scenes. Engines without a classifier return text only.
+  Future<ImageReading> analyzeImage(String path);
 }
 
 /// Bump when the OCR engine/settings change so images already read get re-read.
-const int kOcrVersion = 2;
+/// v3: images are also classified (objects, scenes, clothing).
+/// v4: close-ups of people/objects are classified too, and a calibrated 0.3 cut-off.
+const int kOcrVersion = 4;
 
 OcrEngine createOcrEngine() {
   if (Platform.isAndroid || Platform.isIOS) return MlKitOcrEngine();
@@ -34,6 +51,8 @@ class VisionOcrEngine implements OcrEngine {
   String get name => (_native ?? true) ? 'Apple Vision (on-device)' : (fallback?.name ?? 'none');
   @override
   int get parallelism => 3;
+  @override
+  bool get readsPdf => _native ?? false;
 
   @override
   Future<bool> isAvailable() async {
@@ -55,12 +74,28 @@ class VisionOcrEngine implements OcrEngine {
     }
     return fallback!.recognize(path);
   }
+
+  @override
+  Future<ImageReading> analyzeImage(String path) async {
+    if (!await isAvailable()) return const ImageReading('');
+    if (!_native!) return ImageReading(await fallback!.recognize(path));
+    final r = await _channel.invokeMapMethod<String, Object?>('analyzeImage', {'path': path}) ?? const {};
+    return ImageReading(
+      (r['text'] as String?) ?? '',
+      [
+        for (final l in (r['labels'] as List?) ?? const [])
+          ImageLabel((l as List)[0] as String, (l[1] as num).toDouble()),
+      ],
+    );
+  }
 }
 
 /// Google ML Kit – fully on-device, no network, bundled Latin model.
 class MlKitOcrEngine implements OcrEngine {
   TextRecognizer? _recognizer;
 
+  @override
+  bool get readsPdf => false;
   @override
   String get name => 'ML Kit (on-device)';
   @override
@@ -74,6 +109,9 @@ class MlKitOcrEngine implements OcrEngine {
     final result = await r.processImage(InputImage.fromFilePath(path));
     return result.text;
   }
+
+  @override
+  Future<ImageReading> analyzeImage(String path) async => ImageReading(await recognize(path));
 }
 
 /// Desktop OCR through the free Tesseract CLI, if it is installed.
@@ -81,6 +119,8 @@ class TesseractOcrEngine implements OcrEngine {
   String? _bin;
   bool? _available;
 
+  @override
+  bool get readsPdf => false;
   @override
   String get name => 'Tesseract';
   @override
@@ -119,4 +159,7 @@ class TesseractOcrEngine implements OcrEngine {
     });
     return code == 0 ? await out : '';
   }
+
+  @override
+  Future<ImageReading> analyzeImage(String path) async => ImageReading(await recognize(path));
 }

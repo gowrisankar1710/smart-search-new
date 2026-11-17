@@ -56,6 +56,12 @@ bool hasExtractableText(String ext) =>
     _contentExt.contains(ext) || (!_binaryExt.contains(ext) && !ocrExtensions.contains(ext));
 bool isOcrCandidate(String ext) => ocrExtensions.contains(ext);
 
+/// Videos whose content (on-screen text, speech, subtitle files) can be read.
+bool isVideoCandidate(String ext) => _videoExt.contains(ext);
+
+/// Subtitle files that sit next to a video ("talk.mp4" + "talk.srt" / "talk.en.vtt").
+const subtitleExtensions = <String>{'srt', 'vtt'};
+
 /// Relative CPU cost per byte of extracting text. Feeds the indexer's speed model.
 double extractionCostFactor(String ext) {
   if (ext == 'pdf') return 6;

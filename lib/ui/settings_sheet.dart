@@ -22,14 +22,18 @@ void showSettingsSheet(BuildContext context, AppController c) {
   );
 }
 
-/// Opens a full-screen, time-boxed (≤ 1 min) analysis.
-Future<void> openAnalysis(BuildContext context, AppController c, {List<ScanRoot>? only}) {
-  return Navigator.of(context).push(MaterialPageRoute<void>(
+/// Opens a full-screen analysis that reads every file; it returns to Search only once
+/// everything is read (no back button meanwhile). Returning to Search restarts
+/// its "time until search" clock.
+Future<void> openAnalysis(BuildContext context, AppController c, {List<ScanRoot>? only}) async {
+  final previous = c.timing;
+  await Navigator.of(context).push(MaterialPageRoute<void>(
     builder: (ctx) => Scaffold(
-      appBar: AppBar(title: const Text('Analysing')),
+      appBar: AppBar(title: const Text('Analysing'), automaticallyImplyLeading: false),
       body: SafeArea(
         child: AnalysisView(
           start: (onProgress) => c.analyse(onProgress: onProgress, only: only),
+          previous: previous,
           onContinue: () {
             Navigator.of(ctx).pop();
             c.startBackground();
@@ -38,6 +42,7 @@ Future<void> openAnalysis(BuildContext context, AppController c, {List<ScanRoot>
       ),
     ),
   ));
+  c.enterSearchScreen();
 }
 
 class _SettingsBody extends StatelessWidget {
@@ -66,7 +71,7 @@ class _SettingsBody extends StatelessWidget {
       SwitchListTile(
         contentPadding: EdgeInsets.zero,
         title: const Text('Keep reading files in the background'),
-        subtitle: const Text('Finishes whatever the 1-minute analysis didn\'t reach'),
+        subtitle: const Text('Reads new and changed files as they appear'),
         value: c.store.backgroundEnabled,
         onChanged: c.setBackgroundEnabled,
       ),

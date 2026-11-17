@@ -14,6 +14,7 @@ import 'index_store.dart';
 import 'locations.dart';
 import 'ocr_service.dart';
 import 'search_engine.dart';
+import 'video_service.dart';
 
 enum IndexPhase { preparing, scanning, analysing, done }
 
@@ -69,20 +70,38 @@ class IndexSummary {
 ///  3. A speed model (cost-weighted bytes/second, measured live) skips files that
 ///     can't finish before the deadline – they stay queued for background analysis.
 ///  4. At the deadline a timer kills every worker: the limit is hard, not best-effort.
+///  5. Videos (on-screen text, speech, subtitles) take minutes each, so they are read only
+///     in unbudgeted background runs, one at a time, newest first.
 class Indexer {
-  Indexer(this.store, this.engine, this.ocr);
+  Indexer(this.store, this.engine, this.ocr, {VideoAnalyzer? video})
+      : video = video ?? SubtitleVideoAnalyzer();
 
   final IndexStore store;
   final SearchEngine engine;
   final OcrEngine ocr;
+  final VideoAnalyzer video;
 
   bool _running = false;
+
+  /// Set while a run accepts files that appear mid-run (see [enqueue]).
+  bool Function(IndexedFile f)? _enqueue;
+  bool _willAnalyse = false;
   bool _cancelled = false;
   final List<ExtractWorker> _workers = [];
   FileScan? _scan;
   Completer<void>? _done;
 
   bool get isRunning => _running;
+
+  /// Hands a new or changed file (already in the store, status pending) to the run in
+  /// progress, so it's read now instead of after the run. Returns false when no run will
+  /// read it – the caller should start one.
+  bool enqueue(IndexedFile f) {
+    if (!_running || _cancelled) return false;
+    final live = _enqueue;
+    if (live != null) return live(f);
+    return _willAnalyse; // still discovering: the content queues are built from the store next
+  }
 
   Future<void> cancel() async {
     if (!_running) return;
@@ -93,6 +112,7 @@ class Indexer {
 
   void _stopAll() {
     _scan?.stop();
+    video.cancel();
     for (final w in List.of(_workers)) {
       w.kill();
     }
@@ -110,6 +130,7 @@ class Indexer {
     if (_running) throw StateError('Indexer already running');
     _running = true;
     _cancelled = false;
+    _willAnalyse = analyze;
     _done = Completer<void>();
 
     final sw = Stopwatch()..start();
@@ -190,7 +211,7 @@ class Indexer {
               pending--;
             }
             final f = IndexedFile(path: path, size: size, modifiedMs: ms);
-            if (hasExtractableText(f.ext) || isOcrCandidate(f.ext)) {
+            if (hasExtractableText(f.ext) || isOcrCandidate(f.ext) || isVideoCandidate(f.ext)) {
               pending++;
             } else {
               f.status = IndexStatus.nameOnly;
@@ -248,6 +269,7 @@ class Indexer {
             }
           }
         }
+        _willAnalyse = false;
         final ocrQ = <IndexedFile>[];
         for (final f in store.files.values.where((f) => f.needsOcr)) {
           if (ocrOk && ocrSized(f)) {
@@ -258,9 +280,16 @@ class Indexer {
           }
         }
         ocrQ.sort((a, b) => b.modifiedMs.compareTo(a.modifiedMs));
+        final pdfOcr = ocrOk && ocr.readsPdf;
 
         analysisClock.start();
         emit(force: true);
+
+        // Background runs keep idle lanes alive while any lane is busy, because files
+        // added on disk meanwhile are queued into this run (see [enqueue]).
+        final live = deadline == null;
+        var busy = 0;
+        bool keepWaiting() => live && busy > 0 && !_cancelled;
 
         // Live speed model, refined after every batch.
         var unitsPerSecPerWorker = 3.0 * 1024 * 1024;
@@ -292,12 +321,22 @@ class Indexer {
           try {
             while (!timeUp()) {
               final batch = takeBatch();
-              if (batch.isEmpty) return;
-              final results = await w.run(ExtractJob(
+              if (batch.isEmpty) {
+                if (!keepWaiting()) return;
+                await Future<void>.delayed(const Duration(milliseconds: 250));
+                continue;
+              }
+              busy++;
+              final List<ExtractResult> results;
+              try {
+                results = await w.run(ExtractJob(
                 [for (final f in batch) f.path],
                 [for (final f in batch) f.ext],
-                deadline?.millisecondsSinceEpoch ?? 8640000000000000,
-              ));
+                  deadline?.millisecondsSinceEpoch ?? 8640000000000000,
+                ));
+              } finally {
+                busy--;
+              }
               if (_cancelled && deadline == null) return;
               final byPath = {for (final f in batch) f.path: f};
               var micros = 0;
@@ -307,14 +346,24 @@ class Indexer {
                 if (f == null) continue;
                 micros += r.micros;
                 doneUnits += units(f);
-                if (r.error != null) {
+                if (r.error != null && !(pdfOcr && f.ext == 'pdf')) {
                   f.status = IndexStatus.failed;
+                } else if (r.error != null) {
+                  f.content = ''; // unreadable PDF text layer – OCR below may still read it
                 } else {
                   f
                     ..content = r.text ?? ''
                     ..source = ContentSource.text
                     ..status = IndexStatus.indexed;
                   engine.upsert(f, contentTf: r.termFreq);
+                }
+                if (pdfOcr && f.ext == 'pdf' && f.content.trim().length < 20 && ocrSized(f)) {
+                  // No text layer – a scanned / image-only PDF. Read its pages with OCR.
+                  f
+                    ..source = ContentSource.ocr
+                    ..status = IndexStatus.pending;
+                  ocrQ.add(f);
+                  pending++;
                 }
                 analysed++;
                 pending--;
@@ -338,20 +387,27 @@ class Indexer {
 
         var oi = 0;
         Future<void> ocrLane() async {
-          while (!timeUp() && oi < ocrQ.length) {
+          while (!timeUp()) {
+            if (oi >= ocrQ.length) {
+              // Text readers may still hand over scanned PDFs – wait for them.
+              if (activeWorkers == 0 && !keepWaiting()) return;
+              await Future<void>.delayed(const Duration(milliseconds: 150));
+              continue;
+            }
             final f = ocrQ[oi++];
             if (f.status != IndexStatus.pending) continue;
             final left = remainingTime();
             if (deadline != null && left < const Duration(milliseconds: 700))
               return;
             current = f.path;
+            busy++;
             try {
-              final cap = left < const Duration(seconds: 20)
-                  ? left
-                  : const Duration(seconds: 20);
-              final text = await ocr.recognize(f.path).timeout(cap);
+              final limit = Duration(seconds: f.ext == 'pdf' ? 120 : 20); // PDFs: many pages
+              final cap = left < limit ? left : limit;
+              final read = await ocr.analyzeImage(f.path).timeout(cap);
               f
-                ..content = normalizeContent(text)
+                ..content = normalizeContent(read.text)
+                ..labels = read.labels
                 ..source = ContentSource.ocr
                 ..status = IndexStatus.indexed;
               engine.upsert(f);
@@ -360,6 +416,8 @@ class Indexer {
               f.status = IndexStatus.failed;
             } catch (_) {
               f.status = IndexStatus.failed;
+            } finally {
+              busy--;
             }
             analysed++;
             pending--;
@@ -374,11 +432,131 @@ class Indexer {
           _workers.addAll(spawned);
           if (timeUp()) _stopAll();
         }
-        await Future.wait([
+        // Videos: background runs only – one can take minutes.
+        final videoQ = deadline == null
+            ? (store.files.values.where((f) => f.needsVideo).toList()
+              ..sort((a, b) => b.modifiedMs.compareTo(a.modifiedMs)))
+            : <IndexedFile>[];
+        var vi = 0;
+        var videoLanes = 0;
+        late final Future<void> Function() videoLoop;
+        Future<void> videoLane() async {
+          videoLanes++;
+          try {
+            await videoLoop();
+          } finally {
+            videoLanes--;
+          }
+        }
+
+        videoLoop = () async {
+          while (!timeUp()) {
+            if (vi >= videoQ.length) {
+              if (!keepWaiting()) return;
+              await Future<void>.delayed(const Duration(milliseconds: 250));
+              continue;
+            }
+            final f = videoQ[vi++];
+            if (f.status != IndexStatus.pending) continue;
+            current = f.path;
+            emit(force: true);
+            busy++;
+            try {
+              final segs = await video
+                  .analyze(f.path)
+                  .timeout(kVideoAnalysisLimit + const Duration(minutes: 1));
+              if (_cancelled) return; // stopped part-way – stays queued
+              f
+                ..segments = segs
+                ..source = ContentSource.video
+                ..status = segs.isEmpty ? IndexStatus.nameOnly : IndexStatus.indexed;
+              engine.upsert(f);
+            } catch (_) {
+              if (_cancelled) return;
+              f.status = IndexStatus.failed;
+            } finally {
+              busy--;
+            }
+            analysed++;
+            pending--;
+            bytesDone += f.size;
+            emit();
+          }
+        };
+
+        var ocrLanes = 0;
+        Future<void> ocrLaneCounted() async {
+          ocrLanes++;
+          try {
+            await ocrLane();
+          } finally {
+            ocrLanes--;
+          }
+        }
+
+        final lanes = <Future<void>>[
           for (final w in List.of(_workers)) textLane(w),
-          if (ocrQ.isNotEmpty)
-            for (var i = 0; i < ocr.parallelism; i++) ocrLane(),
-        ]);
+          if (videoQ.isNotEmpty) videoLane(),
+          if (ocrQ.isNotEmpty || (pdfOcr && textQ.any((f) => f.ext == 'pdf')))
+            for (var i = 0; i < ocr.parallelism; i++) ocrLaneCounted(),
+        ];
+
+        var spawning = 0;
+        Future<void> newTextLane() async {
+          spawning++;
+          final ExtractWorker w;
+          try {
+            w = await ExtractWorker.spawn();
+          } finally {
+            spawning--;
+          }
+          if (timeUp()) {
+            w.kill();
+            return;
+          }
+          _workers.add(w);
+          await textLane(w);
+        }
+
+        // Files that appear on disk during a background run join it here.
+        if (live) {
+          _enqueue = (f) {
+            if (timeUp()) return false;
+            if (f.needsVideo) {
+              videoQ.add(f);
+              if (videoLanes == 0) lanes.add(videoLane());
+            } else if (f.needsOcr) {
+              if (!ocrOk || !ocrSized(f)) {
+                f.status = IndexStatus.nameOnly;
+                return true;
+              }
+              ocrQ.add(f);
+              if (ocrLanes == 0) {
+                for (var i = 0; i < ocr.parallelism; i++) {
+                  lanes.add(ocrLaneCounted());
+                }
+              }
+            } else if (f.needsText) {
+              textQ.add(f);
+              if (activeWorkers + spawning == 0) lanes.add(newTextLane());
+            } else {
+              return true; // nothing to read inside – the name is already searchable
+            }
+            pending++;
+            emit();
+            return true;
+          };
+        }
+        try {
+          // Lanes started by [enqueue] while waiting are picked up on the next pass.
+          while (lanes.isNotEmpty) {
+            final now = List.of(lanes);
+            lanes.clear();
+            await Future.wait(now);
+          }
+        } finally {
+          _enqueue = null;
+        }
       }
     } finally {
       killTimer?.cancel();
@@ -387,6 +565,8 @@ class Indexer {
       _workers.clear();
       _scan = null;
       _running = false;
+      _enqueue = null;
+      _willAnalyse = false;
       _done?.complete();
     }
 

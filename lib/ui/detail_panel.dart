@@ -7,9 +7,12 @@ import 'package:flutter/services.dart';
 import '../app_controller.dart';
 import '../core/indexed_file.dart';
 import '../services/search_engine.dart';
+import '../core/object_terms.dart';
+import '../services/video_service.dart';
 import 'format.dart';
 import 'result_tile.dart';
 import 'theme.dart';
+import 'video_player_view.dart';
 
 const _previewable = {'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'};
 
@@ -46,12 +49,15 @@ class _FileDetails extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     final tt = Theme.of(context).textTheme;
     final f = hit.file;
-    final excerpt = _excerpt(f, hit);
+    final moment = hit.firstMoment;
+    final excerpt = moment != null ? null : _excerpt(f, hit);
     final hiStyle = TextStyle(backgroundColor: const Color(0xFFFFE58A), color: cs.onSurface, fontWeight: FontWeight.w600);
     final where = [
       if (hit.sources.contains(MatchSource.name)) 'File name',
       if (hit.sources.contains(MatchSource.content)) 'Text inside the file',
       if (hit.sources.contains(MatchSource.imageText)) 'Text in the image',
+      if (hit.sources.contains(MatchSource.videoContent)) 'What the video shows or says',
+      if (hit.sources.contains(MatchSource.objects)) 'What the picture shows',
       if (hit.sources.contains(MatchSource.folder)) 'Folder name',
     ];
 
@@ -64,11 +70,17 @@ class _FileDetails extends StatelessWidget {
       const SizedBox(height: 16),
       Row(children: [
         Expanded(
-          child: FilledButton.icon(
-            icon: const Icon(Icons.open_in_new_rounded, size: 18),
-            label: const Text('Open'),
-            onPressed: () => openFile(context, f.path),
-          ),
+          child: moment != null
+              ? FilledButton.icon(
+                  icon: const Icon(Icons.play_arrow_rounded, size: 20),
+                  label: Text('Play from ${formatTimestamp(moment.at)}'),
+                  onPressed: () => playVideoAt(context, hit, moment),
+                )
+              : FilledButton.icon(
+                  icon: const Icon(Icons.open_in_new_rounded, size: 18),
+                  label: const Text('Open'),
+                  onPressed: () => openFile(context, f.path),
+                ),
         ),
         const SizedBox(width: 8),
         if (Platform.isMacOS || Platform.isWindows || Platform.isLinux)
@@ -93,6 +105,67 @@ class _FileDetails extends StatelessWidget {
       _InfoRow('Size', formatBytes(f.size)),
       _InfoRow('Modified', formatDate(f.modified)),
       if (where.isNotEmpty) _InfoRow('Matched in', where.join(', ')),
+      if (f.labels.isNotEmpty) ...[
+        const SizedBox(height: 18),
+        _Section('Seen in this picture'),
+        Wrap(spacing: 6, runSpacing: 6, children: [
+          for (final l in f.labels)
+            Tooltip(
+              message: '${(l.confidence * 100).round()}% sure',
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                decoration: BoxDecoration(
+                  color: hit.objects.any((o) => o.id == l.id) ? const Color(0xFFFFE58A) : cs.surfaceContainerLow,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(labelName(l.id),
+                    style: tt.labelMedium?.copyWith(
+                      fontWeight: hit.objects.any((o) => o.id == l.id) ? FontWeight.w700 : FontWeight.w500,
+                    )),
+              ),
+            ),
+        ]),
+      ],
+      if (hit.moments.isNotEmpty) ...[
+        const SizedBox(height: 18),
+        _Section(hit.moments.length == 1 ? 'Moment in the video' : '${hit.moments.length} moments in the video'),
+        for (final m in hit.moments)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Material(
+              color: cs.surface,
+              borderRadius: BorderRadius.circular(10),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(10),
+                onTap: () => playVideoAt(context, hit, m),
+                child: Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: cs.outlineVariant),
+                  ),
+                  child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Icon(Icons.play_circle_fill_rounded, size: 18, color: cs.primary),
+                    const SizedBox(width: 6),
+                    SizedBox(
+                      width: 50,
+                      child: Text(formatTimestamp(m.at),
+                          style: tt.labelMedium?.copyWith(fontWeight: FontWeight.w700, color: cs.primary)),
+                    ),
+                    Expanded(
+                      child: Text.rich(
+                        highlightSpan(m.text.replaceAll('\n', ' · '), hit.highlights,
+                            tt.bodySmall!.copyWith(height: 1.45), hiStyle),
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ]),
+                ),
+              ),
+            ),
+          ),
+      ],
       if (excerpt != null) ...[
         const SizedBox(height: 18),
         _Section(f.source == ContentSource.ocr ? 'Text found in image' : 'Matching text'),
@@ -181,7 +254,8 @@ class _Overview extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     final tt = Theme.of(context).textTheme;
     final s = controller.stats;
-    final pct = s.total == 0 ? 1.0 : s.read / s.total;
+    final reading = controller.showReading;
+    final pct = s.total == 0 || !reading ? 1.0 : s.read / s.total;
     return ListView(padding: const EdgeInsets.all(20), children: [
       _Section('Your index'),
       Container(
@@ -209,7 +283,7 @@ class _Overview extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            s.pending == 0 ? 'Everything has been read' : '${formatCount(s.pending)} files still being read',
+            !reading ? 'Everything has been read' : '${formatCount(s.pending)} files still being read',
             style: tt.labelSmall?.copyWith(color: cs.onSurfaceVariant),
           ),
         ]),
@@ -218,6 +292,10 @@ class _Overview extends StatelessWidget {
       _Section('Tips'),
       const _Tip(Icons.format_quote_rounded, 'Type words exactly as they appear – files containing them are listed first.'),
       const _Tip(Icons.image_search_rounded, 'Text inside screenshots and photos is searchable too.'),
+      const _Tip(Icons.center_focus_strong_rounded,
+          'Search what a photo shows – “saree”, “birds on stones”, “cake” – even with no text in it.'),
+      const _Tip(Icons.smart_display_outlined,
+          'Videos too: search what is shown or said, and playback starts at that moment.'),
       const _Tip(Icons.mouse_outlined, 'Click a result to preview it here, double-click to open.'),
       const _Tip(Icons.keyboard_return_rounded, 'Press Enter to open the top result, Esc to clear.'),
     ]);

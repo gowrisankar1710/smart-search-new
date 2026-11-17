@@ -12,6 +12,7 @@ import 'format.dart';
 import 'result_tile.dart';
 import 'settings_sheet.dart';
 import 'theme.dart';
+import 'video_player_view.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, required this.controller});
@@ -38,6 +39,10 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _seenRevision = c.revision;
     c.addListener(_onController);
+    // Start the "time until search" clock once the screen is on display.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) c.enterSearchScreen();
+    });
   }
 
   @override
@@ -62,18 +67,39 @@ class _HomeScreenState extends State<HomeScreen> {
     _debounce = Timer(const Duration(milliseconds: 160), _search);
   }
 
-  void _search() {
-    final r = c.engine.find(_query.text, kinds: _filter.kinds, under: _under);
-    if (!mounted) return;
-    setState(() {
-      _result = r;
-      if (_selected != null && !r.hits.any((h) => h.file.path == _selected)) _selected = null;
-    });
+  int _gen = 0; // bumps on every new query; older runs see it and stop
+  bool _searching = false;
+
+  Future<void> _search() async {
+    final gen = ++_gen;
+    void show(SearchResult r) {
+      if (!mounted || gen != _gen) return;
+      setState(() {
+        _result = r;
+        if (_selected != null && !r.hits.any((h) => h.file.path == _selected)) _selected = null;
+      });
+    }
+
+    setState(() => _searching = true);
+    if (_query.text.trim().isNotEmpty) c.searchBegan();
+    final r = await c.engine.findAsync(
+      _query.text,
+      kinds: _filter.kinds,
+      under: _under,
+      cancelled: () => !mounted || gen != _gen,
+      onPartial: show,
+    );
+    if (r == null || !mounted || gen != _gen) return;
+    show(r);
+    setState(() => _searching = false);
+    if (_query.text.trim().isNotEmpty) c.searchFinished(r.took);
   }
 
   void _clear() {
     _query.clear();
+    _gen++;
     setState(() {
+      _searching = false;
       _result = SearchResult.empty;
       _selected = null;
     });
@@ -159,21 +185,24 @@ class _HomeScreenState extends State<HomeScreen> {
                 focus: _focus,
                 onChanged: _onChanged,
                 onSubmitted: () {
-                  if (_result.hits.isNotEmpty) openFile(context, _result.hits.first.file.path);
+                  if (_result.hits.isNotEmpty) openHit(context, _result.hits.first);
                 },
                 onClear: _clear,
               ),
             ),
+            _TimingStrip(controller: c),
             if (!showSidebar && hasQuery && _result.allKinds > 0) ...[
               const SizedBox(height: 12),
               _FilterChips(selected: _filter, countFor: _countFor, onSelected: _setFilter),
             ],
-            if (hasQuery) _ResultSummary(result: _result, query: _query.text.trim()),
+            if (hasQuery) _ResultSummary(result: _result, query: _query.text.trim(), searching: _searching),
             Expanded(
               child: !hasQuery
                   ? _Welcome(onExample: _setQuery)
                   : _result.hits.isEmpty
-                      ? _NoResults(query: _query.text.trim(), pending: stats.pending)
+                      ? (_searching
+                          ? const Center(child: SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2)))
+                          : _NoResults(query: _query.text.trim(), pending: c.showReading ? stats.pending : 0))
                       : ListView.builder(
                           padding: const EdgeInsets.fromLTRB(24, 2, 24, 24),
                           itemCount: _result.hits.length,
@@ -370,7 +399,7 @@ class _StatusCard extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     final tt = Theme.of(context).textTheme;
     final s = controller.stats;
-    final reading = controller.backgroundProgress != null || s.pending > 0;
+    final reading = controller.showReading;
     return Container(
       margin: const EdgeInsets.all(12),
       padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
@@ -446,7 +475,7 @@ class _CompactHeader extends StatelessWidget {
         const SizedBox(width: 10),
         Text('Smart Search', style: tt.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
         const Spacer(),
-        Text(s.pending > 0 ? 'Reading · ${formatCount(s.pending)} left' : '${formatCount(s.total)} files',
+        Text(controller.showReading ? 'Reading · ${formatCount(controller.backgroundProgress?.remaining ?? s.pending)} left' : '${formatCount(s.total)} files',
             style: tt.labelMedium?.copyWith(color: cs.onSurfaceVariant)),
         IconButton(
           tooltip: 'Settings',
@@ -497,7 +526,7 @@ class _SearchField extends StatelessWidget {
         style: tt.titleMedium?.copyWith(fontWeight: FontWeight.w500),
         cursorWidth: 1.6,
         decoration: InputDecoration(
-          hintText: 'Search file names, text inside files and images',
+          hintText: 'Search names, text inside files, or what a photo shows',
           hintStyle: tt.titleMedium?.copyWith(color: cs.onSurfaceVariant.withValues(alpha: 0.65)),
           prefixIcon: Padding(
             padding: const EdgeInsets.only(left: 16, right: 10),
@@ -519,6 +548,94 @@ class _SearchField extends StatelessWidget {
           focusedBorder: border.copyWith(borderSide: BorderSide(color: cs.primary, width: 1.5)),
         ),
       ),
+    );
+  }
+}
+
+// ------------------------------------------------------------------ timing
+
+/// "Indexed in 42.1 s · On Search 0:07 – waiting for your search" (live), then
+/// "Search began 3.2 s after opening · took 12 ms".
+class _TimingStrip extends StatefulWidget {
+  const _TimingStrip({required this.controller});
+  final AppController controller;
+
+  @override
+  State<_TimingStrip> createState() => _TimingStripState();
+}
+
+class _TimingStripState extends State<_TimingStrip> {
+  Timer? _tick;
+
+  @override
+  void initState() {
+    super.initState();
+    _tick = Timer.periodic(const Duration(milliseconds: 200), (_) {
+      // Repaint only while the clock runs or background reading changes the numbers.
+      final c = widget.controller;
+      if (mounted && (c.waitingForSearch || c.backgroundProgress != null)) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _tick?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final tt = Theme.of(context).textTheme;
+    final c = widget.controller;
+    final t = c.timing;
+    final bg = c.backgroundProgress;
+    final style = tt.labelSmall?.copyWith(color: cs.onSurfaceVariant, fontFeatures: const [FontFeature.tabularFigures()]);
+    final strong = TextStyle(color: cs.onSurface, fontWeight: FontWeight.w700);
+
+    Widget item(IconData icon, List<InlineSpan> spans, {String? tooltip}) {
+      final w = Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(icon, size: 13, color: cs.primary),
+        const SizedBox(width: 4),
+        Text.rich(TextSpan(style: style, children: spans)),
+      ]);
+      return tooltip == null ? w : Tooltip(message: tooltip, child: w);
+    }
+
+    final items = <Widget>[
+      if (t.indexTime != null)
+        item(Icons.timer_outlined, [
+          const TextSpan(text: 'Indexed in '),
+          TextSpan(text: formatSeconds(t.indexTime!), style: strong),
+        ], tooltip: t.indexAt == null ? null : 'Last indexing pass: ${formatDate(t.indexAt!)}'),
+      if (bg != null && c.showReading)
+        item(Icons.sync_rounded, [
+          const TextSpan(text: 'Background reading '),
+          TextSpan(text: formatSeconds(bg.elapsed), style: strong),
+        ]),
+      if (c.waitingForSearch)
+        item(Icons.hourglass_top_rounded, [
+          const TextSpan(text: 'On Search '),
+          TextSpan(text: formatSeconds(c.searchScreenElapsed), style: strong),
+          const TextSpan(text: ' · waiting for your search'),
+        ])
+      else if (t.waitBeforeSearch != null) ...[
+        item(Icons.hourglass_bottom_rounded, [
+          const TextSpan(text: 'Search began '),
+          TextSpan(text: formatSeconds(t.waitBeforeSearch!), style: strong),
+          const TextSpan(text: ' after opening'),
+        ], tooltip: 'Time from entering the Search screen until the search started'),
+        if (t.searchTook != null)
+          item(Icons.bolt_rounded, [
+            const TextSpan(text: 'took '),
+            TextSpan(text: formatMillis(t.searchTook!), style: strong),
+          ]),
+      ],
+    ];
+    if (items.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(28, 10, 28, 0),
+      child: Wrap(spacing: 14, runSpacing: 4, children: items),
     );
   }
 }
@@ -558,16 +675,17 @@ class _FilterChips extends StatelessWidget {
 }
 
 class _ResultSummary extends StatelessWidget {
-  const _ResultSummary({required this.result, required this.query});
+  const _ResultSummary({required this.result, required this.query, required this.searching});
   final SearchResult result;
   final String query;
+  final bool searching;
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final tt = Theme.of(context).textTheme;
     if (result.total == 0 && result.allKinds == 0) return const SizedBox(height: 12);
-    final n = '${formatCount(result.total)}${result.more ? '+' : ''}';
+    final n = formatCount(result.total);
     final files = result.total == 1 ? 'file' : 'files';
     final style = tt.bodySmall?.copyWith(color: cs.onSurfaceVariant);
     final strong = TextStyle(color: cs.onSurface, fontWeight: FontWeight.w600);
@@ -575,8 +693,10 @@ class _ResultSummary extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.fromLTRB(26, 18, 26, 10),
       child: Row(children: [
-        Icon(result.exact ? Icons.check_circle_rounded : Icons.info_outline_rounded,
-            size: 15, color: result.exact ? const Color(0xFF34C759) : const Color(0xFFF5A524)),
+        if (searching)
+          SizedBox(width: 13, height: 13, child: CircularProgressIndicator(strokeWidth: 1.6, color: cs.primary))
+        else
+          const Icon(Icons.check_circle_rounded, size: 15, color: Color(0xFF34C759)),
         const SizedBox(width: 6),
         Expanded(
           child: Text.rich(
@@ -598,7 +718,8 @@ class _ResultSummary extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
           ),
         ),
-        Text('${result.took.inMilliseconds} ms', style: tt.labelSmall?.copyWith(color: cs.onSurfaceVariant)),
+        Text(searching ? 'Searching…' : '${result.took.inMilliseconds} ms',
+            style: tt.labelSmall?.copyWith(color: cs.onSurfaceVariant)),
       ]),
     );
   }
