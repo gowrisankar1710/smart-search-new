@@ -12,51 +12,63 @@ IconData categoryIcon(FileCategory c) => switch (c) {
       FileCategory.videos => Icons.movie_outlined,
     };
 
-/// Timer screen: one row per category – documents and images are read before Search
-/// opens; videos follow in the background.
-class CategoryRows extends StatelessWidget {
-  const CategoryRows({super.key, required this.counts, required this.finding});
-  final Map<FileCategory, CategoryCount> counts;
-
-  /// Still discovering files: totals are growing, nothing is read yet.
-  final bool finding;
+/// Search screen before typing: how far documents, images and videos are read, and
+/// which kind of file was just added.
+class ReadingProgress extends StatelessWidget {
+  const ReadingProgress({super.key, required this.controller});
+  final AppController controller;
 
   @override
   Widget build(BuildContext context) {
-    return Column(children: [
-      for (final c in FileCategory.values) ...[
-        _Row(category: c, count: counts[c]!, finding: finding),
-        if (c != FileCategory.values.last) const SizedBox(height: 8),
-      ],
-    ]);
+    final tt = Theme.of(context).textTheme;
+    final counts = controller.categories();
+    final adds = controller.recentAdds;
+    return Align(
+      alignment: Alignment.topCenter,
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 520),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('Reading your files', style: tt.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 10),
+            for (final c in FileCategory.values) ...[
+              _Row(category: c, count: counts[c]!),
+              const SizedBox(height: 8),
+            ],
+            if (adds.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              _RecentAddsLine(adds: adds, controller: controller),
+            ],
+          ]),
+        ),
+      ),
+    );
   }
 }
 
 class _Row extends StatelessWidget {
-  const _Row({required this.category, required this.count, required this.finding});
+  const _Row({required this.category, required this.count});
   final FileCategory category;
   final CategoryCount count;
-  final bool finding;
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final tt = Theme.of(context).textTheme;
-    final later = category == FileCategory.videos;
+    final background = category == FileCategory.videos;
     final none = count.total == 0;
-    final done = !finding && !none && count.done;
+    final done = !none && count.done;
     final frac = count.total == 0 ? 0.0 : count.read / count.total;
 
     final (String status, Color color, Widget badge) = switch (()) {
-      _ when finding => ('${formatCount(count.total)} found', cs.onSurfaceVariant, _spinner(cs.primary)),
       _ when none => ('None found', cs.onSurfaceVariant, Icon(Icons.remove_rounded, size: 16, color: cs.outline)),
       _ when done => ('All ${formatCount(count.total)} read', _green, const Icon(Icons.check_circle_rounded, size: 16, color: _green)),
-      _ when later => (
-          '${formatCount(count.left)} · read after Search opens',
-          cs.onSurfaceVariant,
-          Icon(Icons.schedule_rounded, size: 16, color: cs.onSurfaceVariant),
+      _ => (
+          '${formatCount(count.read)} of ${formatCount(count.total)}${background ? ' · in background' : ''}',
+          cs.primary,
+          _spinner(cs.primary),
         ),
-      _ => ('${formatCount(count.read)} of ${formatCount(count.total)}', cs.primary, _spinner(cs.primary)),
     };
 
     return Container(
@@ -83,7 +95,7 @@ class _Row extends StatelessWidget {
           const SizedBox(width: 8),
           badge,
         ]),
-        if (!finding && !none && !done && !later) ...[
+        if (!none && !done) ...[
           const SizedBox(height: 7),
           ClipRRect(
             borderRadius: BorderRadius.circular(3),
@@ -97,66 +109,6 @@ class _Row extends StatelessWidget {
 
 Widget _spinner(Color color) =>
     SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 1.8, color: color));
-
-/// Search screen: which categories are fully read, plus files added just now.
-class CategoryStrip extends StatelessWidget {
-  const CategoryStrip({super.key, required this.controller});
-  final AppController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final tt = Theme.of(context).textTheme;
-    final counts = controller.categories();
-    final style = tt.labelSmall?.copyWith(fontFeatures: const [FontFeature.tabularFigures()]);
-
-    Widget chip(FileCategory c, CategoryCount n) {
-      final done = n.done;
-      final text = done
-          ? '${c.label} · all read'
-          : c == FileCategory.videos
-              ? '${c.label} · ${formatCount(n.read)} of ${formatCount(n.total)} · in background'
-              : '${c.label} · ${formatCount(n.left)} left';
-      return Tooltip(
-        message: '${formatCount(n.total)} ${c.label.toLowerCase()} · ${formatCount(n.read)} read'
-            '${done ? '' : ' · ${formatCount(n.left)} still being read'}',
-        child: Container(
-          padding: const EdgeInsets.fromLTRB(8, 4, 10, 4),
-          decoration: BoxDecoration(
-            color: done ? _green.withValues(alpha: 0.08) : cs.primary.withValues(alpha: 0.07),
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(categoryIcon(c), size: 13, color: done ? _green : cs.primary),
-            const SizedBox(width: 5),
-            Text(text, style: style?.copyWith(color: done ? _green : cs.primary, fontWeight: FontWeight.w600)),
-            const SizedBox(width: 5),
-            if (done)
-              const Icon(Icons.check_rounded, size: 13, color: _green)
-            else
-              SizedBox(width: 10, height: 10, child: CircularProgressIndicator(strokeWidth: 1.5, color: cs.primary)),
-          ]),
-        ),
-      );
-    }
-
-    final chips = [
-      for (final c in FileCategory.values)
-        if (counts[c]!.total > 0) chip(c, counts[c]!),
-    ];
-    final adds = controller.recentAdds;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(28, 10, 28, 0),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        if (chips.isNotEmpty) Wrap(spacing: 6, runSpacing: 6, children: chips),
-        if (adds.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          _RecentAddsLine(adds: adds, controller: controller),
-        ],
-      ]),
-    );
-  }
-}
 
 /// "New image added: beach.jpg · reading…" → "· searchable".
 class _RecentAddsLine extends StatelessWidget {

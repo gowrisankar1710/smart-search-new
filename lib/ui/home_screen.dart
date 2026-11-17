@@ -107,13 +107,6 @@ class _HomeScreenState extends State<HomeScreen> {
     _focus.requestFocus();
   }
 
-  void _setQuery(String q) {
-    _query.text = q;
-    _query.selection = TextSelection.collapsed(offset: q.length);
-    _search();
-    _focus.requestFocus();
-  }
-
   void _setFilter(ResultFilter f) {
     setState(() => _filter = f);
     _search();
@@ -192,7 +185,6 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             _TimingStrip(controller: c),
-            CategoryStrip(controller: c),
             if (!showSidebar && hasQuery && _result.allKinds > 0) ...[
               const SizedBox(height: 12),
               _FilterChips(selected: _filter, countFor: _countFor, onSelected: _setFilter),
@@ -200,7 +192,7 @@ class _HomeScreenState extends State<HomeScreen> {
             if (hasQuery) _ResultSummary(result: _result, query: _query.text.trim(), searching: _searching),
             Expanded(
               child: !hasQuery
-                  ? _Welcome(onExample: _setQuery)
+                  ? ReadingProgress(controller: c)
                   : _result.hits.isEmpty
                       ? (_searching
                           ? const Center(child: SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2)))
@@ -728,58 +720,6 @@ class _ResultSummary extends StatelessWidget {
 }
 
 // ------------------------------------------------------------------ empty states
-
-class _Welcome extends StatelessWidget {
-  const _Welcome({required this.onExample});
-  final ValueChanged<String> onExample;
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final tt = Theme.of(context).textTheme;
-    const examples = ['invoice', 'boarding pass', 'wifi password', 'resume', 'bank statement', 'screenshot'];
-    return Center(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(32),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 440),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Container(
-              width: 64,
-              height: 64,
-              decoration: BoxDecoration(color: cs.primaryContainer, borderRadius: BorderRadius.circular(20)),
-              child: Icon(Icons.manage_search_rounded, size: 32, color: cs.primary),
-            ),
-            const SizedBox(height: 18),
-            Text('Find anything you remember',
-                textAlign: TextAlign.center,
-                style: tt.headlineSmall?.copyWith(fontWeight: FontWeight.w700, letterSpacing: -0.4)),
-            const SizedBox(height: 8),
-            Text(
-              'A word from the file name, a line inside a document, or text in a photo or screenshot.',
-              textAlign: TextAlign.center,
-              style: tt.bodyMedium?.copyWith(color: cs.onSurfaceVariant, height: 1.45),
-            ),
-            const SizedBox(height: 24),
-            Wrap(
-              alignment: WrapAlignment.center,
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                for (final e in examples)
-                  ActionChip(
-                    label: Text(e),
-                    avatar: Icon(Icons.north_west_rounded, size: 14, color: cs.onSurfaceVariant),
-                    onPressed: () => onExample(e),
-                  ),
-              ],
-            ),
-          ]),
-        ),
-      ),
-    );
-  }
-}
 
 class _NoResults extends StatelessWidget {
   const _NoResults({required this.query, required this.pending});

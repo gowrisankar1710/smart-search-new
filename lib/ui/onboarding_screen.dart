@@ -56,7 +56,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 start: (onProgress) => c.analyse(onProgress: onProgress),
                 previous: c.timing,
                 footnote: analysisFootnote(c),
-                categories: () => c.categories(within: c.personalRoots),
                 onContinue: c.completeOnboarding,
               ),
             )
