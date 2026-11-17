@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../app_controller.dart';
 import '../services/locations.dart';
 import 'analysis_view.dart';
+import 'permission_sheet.dart';
+import '../services/permissions.dart' show hasSystemPrompts;
 import 'format.dart';
 
 void showSettingsSheet(BuildContext context, AppController c) {
@@ -92,6 +94,15 @@ class _SettingsBody extends StatelessWidget {
               : c.ocr.name),
         ),
       ),
+      if (hasSystemPrompts)
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.verified_user_outlined),
+          title: const Text('Access & permissions'),
+          subtitle: const Text('Folders and speech in videos'),
+          trailing: const Icon(Icons.chevron_right_rounded),
+          onTap: () => showPermissionSheet(context, c),
+        ),
       const Divider(height: 32),
       Text('Search locations', style: tt.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
       const SizedBox(height: 4),

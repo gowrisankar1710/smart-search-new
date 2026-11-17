@@ -10,6 +10,7 @@ import '../services/search_engine.dart';
 import 'detail_panel.dart';
 import 'category_status.dart';
 import 'format.dart';
+import 'permission_sheet.dart';
 import 'result_tile.dart';
 import 'settings_sheet.dart';
 import 'theme.dart';
@@ -43,6 +44,7 @@ class _HomeScreenState extends State<HomeScreen> {
     // Start the "time until search" clock once the screen is on display.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) c.enterSearchScreen();
+      if (mounted) maybeShowPermissionSheet(context, c); // once, for installs from before it existed
     });
   }
 

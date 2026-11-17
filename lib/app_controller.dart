@@ -459,6 +459,19 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// The "Allow access" screen was answered. If speech was just allowed, videos read
+  /// without it are read again so what is said in them becomes searchable.
+  void permissionsAnswered({required bool speechGranted}) {
+    store.permissionsAsked = true;
+    if (speechGranted) {
+      for (final f in store.files.values) {
+        if (isVideoCandidate(f.ext) && f.status != IndexStatus.pending) f.status = IndexStatus.pending;
+      }
+      if (store.initialDone) startBackground();
+    }
+    unawaited(store.save());
+  }
+
   void completeOnboarding() {
     store.initialDone = true;
     unawaited(store.save());

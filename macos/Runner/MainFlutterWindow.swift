@@ -264,6 +264,14 @@ enum VideoAnalysis {
       case "cancel":
         cancelled = true
         result(nil)
+      case "speechStatus":
+        result(speechStatus())
+      case "requestSpeech":
+        // Shown only after the app's own "Allow access" screen – never mid-analysis.
+        guard hasUsageDescription else { result(false); return }
+        SFSpeechRecognizer.requestAuthorization { status in
+          DispatchQueue.main.async { result(status == .authorized) }
+        }
       case "analyze":
         guard let args = call.arguments as? [String: Any], let path = args["path"] as? String else {
           result(FlutterError(code: "bad_args", message: "path required", details: nil))
@@ -330,25 +338,23 @@ enum VideoAnalysis {
 
   // ---------------------------------------------------------------- speech
 
-  private static func authorized() -> Bool {
-    // Asking without a usage description makes macOS kill the app (TCC). A build without
-    // the Info.plist key simply skips speech – on-screen text and subtitles still work.
-    guard Bundle.main.object(forInfoDictionaryKey: "NSSpeechRecognitionUsageDescription") is String else {
-      return false
-    }
+  private static var hasUsageDescription: Bool {
+    Bundle.main.object(forInfoDictionaryKey: "NSSpeechRecognitionUsageDescription") is String
+  }
+
+  private static func speechStatus() -> String {
+    guard hasUsageDescription else { return "unavailable" }
     switch SFSpeechRecognizer.authorizationStatus() {
-    case .authorized: return true
-    case .notDetermined:
-      let done = DispatchSemaphore(value: 0)
-      var ok = false
-      SFSpeechRecognizer.requestAuthorization { status in
-        ok = status == .authorized
-        done.signal()
-      }
-      _ = done.wait(timeout: .now() + 120)
-      return ok
-    default: return false
+    case .authorized: return "granted"
+    case .notDetermined: return "notAsked"
+    default: return "denied"
     }
+  }
+
+  /// Speech is used only once the user allowed it on the app's "Allow access" screen;
+  /// a background video never brings up the system prompt by itself.
+  private static func authorized() -> Bool {
+    hasUsageDescription && SFSpeechRecognizer.authorizationStatus() == .authorized
   }
 
   private static func speech(_ asset: AVURLAsset, duration: Double, stop: () -> Bool) -> [[String: Any]] {

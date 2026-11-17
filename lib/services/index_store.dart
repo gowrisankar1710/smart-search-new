@@ -13,6 +13,9 @@ class IndexStore {
   final List<String> extraRoots = [];
   bool initialDone = false;
   bool backgroundEnabled = true;
+
+  /// The "Allow access" screen was shown (macOS), so it isn't shown again.
+  bool permissionsAsked = false;
   int ocrVersion = 0;
   int contentVersion = 0;
   DateTime? lastRun;
@@ -38,6 +41,7 @@ class IndexStore {
       final data = await compute(_decode, await _file!.readAsBytes());
       initialDone = data['initialDone'] as bool? ?? false;
       backgroundEnabled = data['bg'] as bool? ?? true;
+      permissionsAsked = data['pa'] as bool? ?? false;
       ocrVersion = data['ocr'] as int? ?? 0;
       contentVersion = data['cv'] as int? ?? 0;
       final last = data['last'] as int?;
@@ -73,6 +77,7 @@ class IndexStore {
       'v': 1,
       'initialDone': initialDone,
       'bg': backgroundEnabled,
+      'pa': permissionsAsked,
       'ocr': ocrVersion,
       'cv': contentVersion,
       'last': lastRun?.millisecondsSinceEpoch,
