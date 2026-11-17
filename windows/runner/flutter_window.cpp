@@ -3,6 +3,7 @@
 #include <optional>
 
 #include "flutter/generated_plugin_registrant.h"
+#include "native_analysis.h"
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
     : project_(project) {}
@@ -25,6 +26,8 @@ bool FlutterWindow::OnCreate() {
     return false;
   }
   RegisterPlugins(flutter_controller_->engine());
+  // On-device OCR (images, scanned PDFs, video frames) and object recognition.
+  native_analysis::Register(flutter_controller_->engine()->messenger(), GetHandle());
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
@@ -59,6 +62,10 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
     if (result) {
       return *result;
     }
+  }
+
+  if (native_analysis::HandleMessage(message)) {
+    return 0;
   }
 
   switch (message) {

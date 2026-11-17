@@ -4,10 +4,14 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 class ScanRoot {
-  const ScanRoot(this.path, this.label, {this.userAdded = false});
+  const ScanRoot(this.path, this.label, {this.userAdded = false, this.wholeDrive = false});
   final String path;
   final String label;
   final bool userAdded;
+
+  /// A whole drive (or everything under the user profile on Windows): read in the
+  /// background after Search opens, not while the Timer screen waits.
+  final bool wholeDrive;
 }
 
 /// Works out which folders/drives are reachable on this platform.
@@ -21,11 +25,11 @@ class Locations {
         (Platform.isWindows || Platform.isMacOS) ? a.toLowerCase() == b.toLowerCase() : a == b;
 
     final skip = skipPaths();
-    void add(String path, String label, {bool user = false}) {
+    void add(String path, String label, {bool user = false, bool drive = false}) {
       final n = p.normalize(path);
       if (out.any((r) => same(r.path, n)) || skip.any((s) => same(s, n))) return;
       try {
-        if (Directory(n).existsSync()) out.add(ScanRoot(n, label, userAdded: user));
+        if (Directory(n).existsSync()) out.add(ScanRoot(n, label, userAdded: user, wholeDrive: drive));
       } catch (_) {}
     }
 
@@ -44,11 +48,13 @@ class Locations {
       add(p.join(h, 'Downloads'), 'Downloads');
       add(p.join(h, 'Videos'), 'Videos');
       add(p.join(h, 'Music'), 'Music');
-      add(h, 'Home');
+      add(p.join(h, 'OneDrive'), 'OneDrive');
+      // Everything else under the profile and on the drives: read after Search opens.
+      add(h, 'Home', drive: true);
       for (final l in 'DEFGHIJKLMNOPQRSTUVWXYZ'.split('')) {
-        add('$l:\\', 'Drive $l:');
+        add('$l:\\', 'Drive $l:', drive: true);
       }
-      add(r'C:\', 'Drive C:');
+      add(r'C:\', 'Drive C:', drive: true);
     } else if (Platform.isMacOS) {
       final h = _home;
       add(p.join(h, 'Desktop'), 'Desktop');
@@ -60,7 +66,7 @@ class Locations {
       add(h, 'Home');
       try {
         for (final v in Directory('/Volumes').listSync(followLinks: false)) {
-          if (v is Directory) add(v.path, p.basename(v.path));
+          if (v is Directory) add(v.path, p.basename(v.path), drive: true);
         }
       } catch (_) {}
     } else if (Platform.isLinux) {
@@ -73,7 +79,7 @@ class Locations {
       for (final base in ['/media/$user', '/run/media/$user', '/mnt']) {
         try {
           for (final v in Directory(base).listSync(followLinks: false)) {
-            if (v is Directory) add(v.path, p.basename(v.path));
+            if (v is Directory) add(v.path, p.basename(v.path), drive: true);
           }
         } catch (_) {}
       }

@@ -13,13 +13,16 @@ const _green = Color(0xFF22B573);
 
 /// Live view of a time-boxed analysis: countdown ring, step tracker, live counters, summary.
 class AnalysisView extends StatefulWidget {
-  const AnalysisView({super.key, required this.start, required this.onContinue, this.previous});
+  const AnalysisView({super.key, required this.start, required this.onContinue, this.previous, this.footnote});
 
   final Future<IndexSummary> Function(void Function(IndexProgress) onProgress) start;
   final VoidCallback onContinue;
 
   /// Timings from before this run (last search visit), shown in the timer card.
   final TimingSnapshot? previous;
+
+  /// Replaces the default line under the running analysis.
+  final String? footnote;
 
   @override
   State<AnalysisView> createState() => _AnalysisViewState();
@@ -66,7 +69,7 @@ class _AnalysisViewState extends State<AnalysisView> {
         ? _ErrorBody(error: _error!, onContinue: widget.onContinue)
         : _summary != null
             ? _DoneBody(summary: _summary!, previous: widget.previous, onContinue: widget.onContinue)
-            : _RunningBody(progress: _p, elapsed: _clock.elapsed);
+            : _RunningBody(progress: _p, elapsed: _clock.elapsed, footnote: widget.footnote);
     return _Backdrop(
       child: Center(
         child: SingleChildScrollView(
@@ -94,9 +97,10 @@ class _AnalysisViewState extends State<AnalysisView> {
 // ------------------------------------------------------------------ running
 
 class _RunningBody extends StatelessWidget {
-  const _RunningBody({required this.progress, required this.elapsed});
+  const _RunningBody({required this.progress, required this.elapsed, this.footnote});
   final IndexProgress? progress;
   final Duration elapsed;
+  final String? footnote;
 
   @override
   Widget build(BuildContext context) {
@@ -175,7 +179,7 @@ class _RunningBody extends StatelessWidget {
           const SizedBox(width: 6),
           Flexible(
             child: Text(
-              'Search opens by itself once every file has been read – videos take longest.',
+              footnote ?? 'Search opens by itself once every file has been read – videos take longest.',
               textAlign: TextAlign.center,
               style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant),
             ),

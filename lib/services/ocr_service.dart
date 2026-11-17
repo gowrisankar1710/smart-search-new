@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 
+import '../core/imagenet_labels.dart';
 import '../core/indexed_file.dart';
 
 /// What was read from one image: its text and what it shows.
@@ -31,26 +32,31 @@ abstract class OcrEngine {
 /// Bump when the OCR engine/settings change so images already read get re-read.
 /// v3: images are also classified (objects, scenes, clothing).
 /// v4: close-ups of people/objects are classified too, and a calibrated 0.3 cut-off.
-const int kOcrVersion = 4;
+/// Windows v5: built-in Windows OCR and the bundled object classifier.
+final int kOcrVersion = Platform.isWindows ? 5 : 4;
 
 OcrEngine createOcrEngine() {
   if (Platform.isAndroid || Platform.isIOS) return MlKitOcrEngine();
-  if (Platform.isMacOS) return VisionOcrEngine(fallback: TesseractOcrEngine());
+  if (Platform.isMacOS || Platform.isWindows) return NativeOcrEngine(fallback: TesseractOcrEngine());
   return TesseractOcrEngine();
 }
 
-/// macOS: Apple Vision (the Live Text engine) via a native method channel.
-/// Built into the OS – nothing to install – and much better on screenshots and photos.
-class VisionOcrEngine implements OcrEngine {
-  VisionOcrEngine({this.fallback});
+/// The OS's own engines via a native method channel – nothing to install:
+///  • macOS: Apple Vision (the Live Text engine) – text and objects/scenes
+///  • Windows: Windows.Media.Ocr for text, the bundled MobileNetV2 (Windows ML) for objects
+/// Tesseract, if installed, is the fallback when the native engine isn't available.
+class NativeOcrEngine implements OcrEngine {
+  NativeOcrEngine({this.fallback});
   final OcrEngine? fallback;
   static const _channel = MethodChannel('smart_file_search/ocr');
   bool? _native;
 
   @override
-  String get name => (_native ?? true) ? 'Apple Vision (on-device)' : (fallback?.name ?? 'none');
+  String get name => (_native ?? true)
+      ? (Platform.isWindows ? 'Windows OCR + Windows ML (on-device)' : 'Apple Vision (on-device)')
+      : (fallback?.name ?? 'none');
   @override
-  int get parallelism => 3;
+  int get parallelism => Platform.isWindows ? 2 : 3;
   @override
   bool get readsPdf => _native ?? false;
 
@@ -80,14 +86,27 @@ class VisionOcrEngine implements OcrEngine {
     if (!await isAvailable()) return const ImageReading('');
     if (!_native!) return ImageReading(await fallback!.recognize(path));
     final r = await _channel.invokeMapMethod<String, Object?>('analyzeImage', {'path': path}) ?? const {};
-    return ImageReading(
-      (r['text'] as String?) ?? '',
-      [
-        for (final l in (r['labels'] as List?) ?? const [])
-          ImageLabel((l as List)[0] as String, (l[1] as num).toDouble()),
-      ],
-    );
+    return ImageReading((r['text'] as String?) ?? '', parseNativeLabels((r['labels'] as List?) ?? const []));
   }
+}
+
+/// Native labels: Apple Vision's are search words already ([id, confidence]); Windows
+/// sends raw model classes (["imagenet:<id>", p]), mapped onto the same search words.
+List<ImageLabel> parseNativeLabels(List<Object?> raw) {
+  final vision = <ImageLabel>[];
+  final imagenet = <(int, double)>[];
+  for (final l in raw) {
+    if (l is! List || l.length < 2) continue;
+    final id = l[0] as String;
+    final p = (l[1] as num).toDouble();
+    if (id.startsWith('imagenet:')) {
+      final i = int.tryParse(id.substring(9));
+      if (i != null) imagenet.add((i, p));
+    } else {
+      vision.add(ImageLabel(id, p));
+    }
+  }
+  return imagenet.isEmpty ? vision : [...vision, ...labelsFromImagenet(imagenet)];
 }
 
 /// Google ML Kit – fully on-device, no network, bundled Latin model.

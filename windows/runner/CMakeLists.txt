@@ -9,6 +9,7 @@ project(runner LANGUAGES CXX)
 add_executable(${BINARY_NAME} WIN32
   "flutter_window.cpp"
   "main.cpp"
+  "native_analysis.cpp"
   "utils.cpp"
   "win32_window.cpp"
   "${FLUTTER_MANAGED_DIR}/generated_plugin_registrant.cc"
@@ -34,6 +35,10 @@ target_compile_definitions(${BINARY_NAME} PRIVATE "NOMINMAX")
 # dependencies here.
 target_link_libraries(${BINARY_NAME} PRIVATE flutter flutter_wrapper_app)
 target_link_libraries(${BINARY_NAME} PRIVATE "dwmapi.lib")
+# C++/WinRT: Windows.Media.Ocr, Windows.Data.Pdf, Windows.Media.Editing, Windows ML.
+target_link_libraries(${BINARY_NAME} PRIVATE "windowsapp.lib")
+# The WinRT projection headers are large.
+set_source_files_properties("native_analysis.cpp" PROPERTIES COMPILE_OPTIONS "/bigobj")
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 
 # Run the Flutter tool portions of the build. This must not be removed.

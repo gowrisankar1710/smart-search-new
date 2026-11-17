@@ -318,8 +318,16 @@ class AppController extends ChangeNotifier {
     return IndexStats(store.files.length, read, pending, failed);
   }
 
-  /// A full analysis: finds every file and reads every one of them (documents, images,
-  /// videos) before returning, so Search opens with everything searchable.
+  /// Personal folders (Desktop, Documents, Downloads, Pictures, Videos, Music, OneDrive,
+  /// folders the user added) – what the Timer screen waits for.
+  List<ScanRoot> get personalRoots => [for (final r in roots) if (!r.wholeDrive) r];
+
+  /// Whole drives are read in the background after Search opens.
+  bool get hasWholeDrives => roots.any((r) => r.wholeDrive);
+
+  /// A full analysis of the personal folders (or [only]): finds every file and reads
+  /// every one of them (documents, images, videos) before returning, so Search opens
+  /// with them all searchable. Whole drives follow in the background.
   /// Used on first launch, for re-analysis and new folders.
   Future<IndexSummary> analyse(
       {required void Function(IndexProgress) onProgress,
@@ -328,10 +336,12 @@ class AppController extends ChangeNotifier {
     backgroundProgress = null;
     _rewatch(); // the user has started: files added while this runs join it
     final summary = await indexer.run(
-      roots: only ?? roots,
+      roots: only ?? personalRoots,
       skipPaths: Locations.skipPaths(),
       onProgress: onProgress,
     );
+    // Drives next: the background scan starts as soon as Search is open.
+    if (only == null && hasWholeDrives) _lastAutoScan = DateTime(2000);
     store
       ..lastIndexTime = summary.elapsed
       ..lastIndexAt = DateTime.now();

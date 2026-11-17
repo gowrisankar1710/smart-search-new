@@ -81,6 +81,11 @@ install(FILES "${FLUTTER_ICU_DATA_FILE}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}
 install(FILES "${FLUTTER_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
   COMPONENT Runtime)
 
+# Image classifier for object search (MobileNetV2, ONNX opset 7 – runs on the Windows ML
+# built into Windows 10 1809+). From the ONNX Model Zoo, Apache License 2.0.
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/runner/resources/models/mobilenetv2-7.onnx"
+  DESTINATION "${INSTALL_BUNDLE_DATA_DIR}/models" COMPONENT Runtime)
+
 if(PLUGIN_BUNDLED_LIBRARIES)
   install(FILES "${PLUGIN_BUNDLED_LIBRARIES}"
     DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"

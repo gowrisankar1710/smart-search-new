@@ -1,3 +1,5 @@
+import 'dart:io';
+
 /// Share of an indexing budget (when one is given) the file-discovery phase may use before content reading starts.
 /// If discovery finishes sooner, content reading automatically gets the rest.
 const double kScanShare = 0.35;
@@ -17,7 +19,8 @@ const Duration kWatchedRescanInterval = Duration(minutes: 10);
 /// v3: scanned / image-only PDFs are read with OCR.
 /// v4: videos are read (on-screen text, speech, subtitles) with timestamps.
 /// v5: speech is timed per word (was per phrase), so videos are read again.
-const int kContentVersion = 5;
+/// Windows v6: on-screen text in videos and scanned PDFs are read with Windows OCR.
+final int kContentVersion = Platform.isWindows ? 6 : 5;
 
 /// Longest a single video may take to analyse before it is marked failed.
 const Duration kVideoAnalysisLimit = Duration(minutes: 15);

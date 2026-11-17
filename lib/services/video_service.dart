@@ -26,7 +26,7 @@ abstract class VideoAnalyzer {
 }
 
 VideoAnalyzer createVideoAnalyzer() =>
-    Platform.isMacOS ? NativeVideoAnalyzer() : SubtitleVideoAnalyzer();
+    Platform.isMacOS || Platform.isWindows ? NativeVideoAnalyzer() : SubtitleVideoAnalyzer();
 
 /// Every platform: reads subtitle files saved next to the video.
 class SubtitleVideoAnalyzer implements VideoAnalyzer {
@@ -43,16 +43,20 @@ class SubtitleVideoAnalyzer implements VideoAnalyzer {
 }
 
 /// macOS: AVFoundation samples frames → Apple Vision reads on-screen text, and the
-/// on-device Speech recogniser transcribes the audio. Plus any subtitle files.
+/// on-device Speech recogniser transcribes the audio.
+/// Windows: Windows.Media.Editing samples frames → Windows OCR reads on-screen text
+/// (Windows has no built-in speech-to-text for files).
+/// Plus any subtitle files.
 class NativeVideoAnalyzer implements VideoAnalyzer {
   static const _channel = MethodChannel('smart_file_search/video');
   bool? _native;
 
   /// AVFoundation can't open these containers – only their subtitle files are read.
-  static const _unsupported = {'mkv', 'webm', 'avi', 'wmv'};
+  /// (Windows Media Foundation decides for itself; unreadable files just yield nothing.)
+  static Set<String> get _unsupported => Platform.isMacOS ? const {'mkv', 'webm', 'avi', 'wmv'} : const {};
 
   @override
-  String get name => 'Apple Vision + Speech (on-device)';
+  String get name => Platform.isWindows ? 'Windows OCR on video frames' : 'Apple Vision + Speech (on-device)';
 
   @override
   Future<bool> readsMedia() async {

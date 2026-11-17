@@ -34,6 +34,7 @@ Future<void> openAnalysis(BuildContext context, AppController c, {List<ScanRoot>
         child: AnalysisView(
           start: (onProgress) => c.analyse(onProgress: onProgress, only: only),
           previous: previous,
+          footnote: only == null ? analysisFootnote(c) : null,
           onContinue: () {
             Navigator.of(ctx).pop();
             c.startBackground();
@@ -44,6 +45,11 @@ Future<void> openAnalysis(BuildContext context, AppController c, {List<ScanRoot>
   ));
   c.enterSearchScreen();
 }
+
+/// What the Timer screen says it waits for.
+String? analysisFootnote(AppController c) => c.hasWholeDrives
+    ? 'Search opens once your folders are read. Whole drives continue in the background.'
+    : null;
 
 class _SettingsBody extends StatelessWidget {
   const _SettingsBody({required this.controller, required this.scroll, required this.hostContext});

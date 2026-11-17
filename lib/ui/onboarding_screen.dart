@@ -6,6 +6,7 @@ import '../app_controller.dart';
 import '../services/locations.dart';
 import '../services/permissions.dart';
 import 'analysis_view.dart';
+import 'settings_sheet.dart';
 import 'format.dart';
 
 const _indigo = Color(0xFF4F5BFF);
@@ -54,6 +55,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               child: AnalysisView(
                 start: (onProgress) => c.analyse(onProgress: onProgress),
                 previous: c.timing,
+                footnote: analysisFootnote(c),
                 onContinue: c.completeOnboarding,
               ),
             )
