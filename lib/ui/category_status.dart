@@ -2,49 +2,22 @@ import 'package:flutter/material.dart';
 
 import '../app_controller.dart';
 import '../core/file_types.dart';
-import 'format.dart';
 
 const _green = Color(0xFF22B573);
 
-/// One plain line under the search field, e.g. "Documents ✓ · Images 12 left · Videos ✓",
-/// plus a line naming files just added. Short re-reads (a saved file or two) stay quiet.
+/// Under the search field: names files just added, e.g. "New image added: beach.jpg ·
+/// reading…" → "· searchable". Nothing is shown otherwise.
 class CategoryLine extends StatelessWidget {
   const CategoryLine({super.key, required this.controller});
   final AppController controller;
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final tt = Theme.of(context).textTheme;
-    final counts = controller.categories();
-    final reading = controller.showReading;
-    final style = tt.labelSmall?.copyWith(color: cs.onSurfaceVariant, fontFeatures: const [FontFeature.tabularFigures()]);
-
-    final parts = <InlineSpan>[];
-    for (final c in FileCategory.values) {
-      final n = counts[c]!;
-      if (n.total == 0) continue;
-      if (parts.isNotEmpty) parts.add(const TextSpan(text: '  ·  '));
-      final busy = reading && !n.done;
-      parts
-        ..add(TextSpan(text: '${c.label} '))
-        ..add(busy
-            ? TextSpan(
-                text: '${formatCount(n.left)} left',
-                style: TextStyle(color: cs.primary, fontWeight: FontWeight.w600))
-            : const TextSpan(text: '✓', style: TextStyle(color: _green, fontWeight: FontWeight.w700)));
-    }
     final adds = controller.recentAdds;
-    if (parts.isEmpty && adds.isEmpty) return const SizedBox.shrink();
+    if (adds.isEmpty) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.fromLTRB(28, 6, 28, 0),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        if (parts.isNotEmpty) Text.rich(TextSpan(style: style, children: parts)),
-        if (adds.isNotEmpty) ...[
-          const SizedBox(height: 4),
-          _RecentAddsLine(adds: adds, controller: controller),
-        ],
-      ]),
+      child: _RecentAddsLine(adds: adds, controller: controller),
     );
   }
 }
