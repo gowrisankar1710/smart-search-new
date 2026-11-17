@@ -18,7 +18,20 @@ jobs:
 
       - run: flutter --version
       - run: flutter pub get
-      - run: flutter build windows --release
+      - name: flutter build windows --release
+        shell: pwsh
+        run: |
+          flutter build windows --release 2>&1 | Tee-Object -FilePath build.log
+          if ($LASTEXITCODE -ne 0) {
+            # Surface compiler errors as annotations (readable without signing in).
+            $lines = Select-String -Path build.log -Pattern ': (fatal )?error |error C\d|error LNK|warning C\d' |
+              ForEach-Object { $_.Line.Trim() } | Select-Object -Unique -First 30
+            for ($i = 0; $i -lt $lines.Count; $i += 3) {
+              $chunk = ($lines[$i..([Math]::Min($i + 2, $lines.Count - 1))] -join ' || ')
+              Write-Output "::error::$chunk"
+            }
+            exit 1
+          }
 
       - uses: actions/upload-artifact@v4
         with:
