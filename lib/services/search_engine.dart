@@ -12,16 +12,22 @@ import '../core/text_tools.dart';
 enum MatchSource { name, folder, content, imageText, videoContent, objects }
 
 class SearchHit {
-  SearchHit(this.file, this.score, this.sources, this.snippet, this.highlights,
-      {this.moments = const [], this.objects = const []});
+  /// [snippet] and [moments] are worked out when first shown: a search can list
+  /// hundreds of files, and only the rows on screen need them.
+  SearchHit(this.file, this.score, this.sources, String? Function() snippet, this.highlights,
+      {List<VideoSegment> Function()? moments, this.objects = const []})
+      : _snippet = snippet,
+        _moments = moments;
   final IndexedFile file;
   final double score;
   final Set<MatchSource> sources;
-  final String? snippet;
+  final String? Function() _snippet;
+  final List<VideoSegment> Function()? _moments;
+  late final String? snippet = _snippet();
   final List<String> highlights;
 
   /// Videos: the moments where the searched text is shown or spoken, earliest first.
-  final List<VideoSegment> moments;
+  late final List<VideoSegment> moments = _moments?.call() ?? const [];
 
   /// Images: labels that matched the search ("sari", "bird"), most certain first.
   final List<ImageLabel> objects;
@@ -59,8 +65,11 @@ class SearchResult {
 class SearchEngine {
   final List<IndexedFile?> _docs = [];
   final Map<String, int> _ids = {};
-  final Map<String, Set<int>> _words = {}; // lower-cased word → docs whose text contains it
-  final Map<int, List<String>> _keys = {};
+  /// Lower-cased word → docs whose text contains it. A plain list per word (not a set):
+  /// millions of entries, so it's the bulk of the index's memory. Entries left behind
+  /// when a file is re-read or removed are harmless: every candidate is confirmed
+  /// against the file's real text, and removed files are gone from [_docs].
+  final Map<String, List<int>> _words = {};
   final List<String> _vocab = []; // every word ever indexed (append-only; stale entries are harmless)
   final Set<String> _vocabSet = {};
   final Map<String, Set<int>> _labelWords = {}; // image label word → docs showing it
@@ -87,13 +96,12 @@ class SearchEngine {
     for (final w in words) {
       final post = _words[w];
       if (post == null) {
-        _words[w] = {id};
+        _words[w] = [id];
         if (_vocabSet.add(w)) _vocab.add(w);
-      } else {
+      } else if (post.last != id) {
         post.add(id);
       }
     }
-    _keys[id] = words.toList();
     if (f.labels.isNotEmpty) {
       final keys = {for (final l in f.labels) ...labelWords(l.id)}.toList();
       for (final k in keys) {
@@ -114,7 +122,6 @@ class SearchEngine {
     _docs.clear();
     _ids.clear();
     _words.clear();
-    _keys.clear();
     _labelWords.clear();
     _labelKeys.clear();
     _vocab.clear();
@@ -137,17 +144,22 @@ class SearchEngine {
     clear();
     final withText = <IndexedFile>[];
     var n = 0;
+    final clock = Stopwatch()..start();
     for (final f in files) {
       upsert(f, contentTf: const {});
       if (f.content.isNotEmpty) withText.add(f);
-      if (++n % 5000 == 0) await Future<void>.delayed(Duration.zero);
+      if (++n % 500 == 0 && clock.elapsedMilliseconds > 8) {
+        await Future<void>.delayed(Duration.zero); // let a frame through
+        clock.reset();
+      }
     }
     onNamesReady?.call();
     if (withText.isEmpty) return;
 
     withText.sort((a, b) => b.modifiedMs.compareTo(a.modifiedMs));
     final mobile = Platform.isAndroid || Platform.isIOS;
-    final lanes = (Platform.numberOfProcessors - 1).clamp(1, mobile ? 2 : 6);
+    // Half the cores at most: the rest stay free for the user while the app starts.
+    final lanes = (Platform.numberOfProcessors ~/ 2).clamp(1, mobile ? 2 : 4);
     const chunk = 400;
     var next = 0;
     var done = 0;
@@ -158,7 +170,12 @@ class SearchEngine {
         next += part.length;
         final contents = [for (final f in part) f.content];
         final tfs = await compute(_tfBatch, contents);
+        final slice = Stopwatch()..start();
         for (var j = 0; j < part.length; j++) {
+          if (slice.elapsedMilliseconds > 8) {
+            await Future<void>.delayed(Duration.zero); // let a frame through
+            slice.reset();
+          }
           final f = part[j];
           // Skip files read again or removed meanwhile – their newer entry stands.
           final id = _ids[f.path];
@@ -178,14 +195,6 @@ class SearchEngine {
       final post = _labelWords[w];
       post?.remove(id);
       if (post != null && post.isEmpty) _labelWords.remove(w);
-    }
-    final k = _keys.remove(id);
-    if (k == null) return;
-    for (final w in k) {
-      final post = _words[w];
-      if (post == null) continue;
-      post.remove(id);
-      if (post.isEmpty) _words.remove(w);
     }
   }
 
@@ -214,7 +223,7 @@ class SearchEngine {
     final sinceEmit = Stopwatch()..start();
     while (!run.step(const Duration(milliseconds: 8))) {
       if (onPartial != null && sinceEmit.elapsedMilliseconds > 150) {
-        onPartial(run.result(partial: true));
+        onPartial(run.result(partial: true)); // first screenful only – snippets cost time
         sinceEmit.reset();
       }
       await Future<void>.delayed(Duration.zero);
@@ -231,11 +240,11 @@ class SearchEngine {
     // line breaks, any punctuation – or nothing ("100years" in PDFs). Case is ignored.
     final pattern = toks.isEmpty ? RegExp.escape(q) : toks.map(RegExp.escape).join(r'[^\p{L}\p{N}]*');
     final re = RegExp(pattern, caseSensitive: false, unicode: true);
-    final cand = toks.isEmpty ? null : _contentCandidates(toks);
     final objWords = objectQueryWords(toks);
     final objKeys = [for (final w in objWords) objectKeys(w)];
     final objCand = _objectCandidates(objKeys);
-    return _Run(this, re, toks.length == 1 ? toks.single.toLowerCase() : null, q, toks, cand, kinds, under, limit,
+    return _Run(this, re, toks.length == 1 ? toks.single.toLowerCase() : null, q, toks, _Candidates(this, toks), kinds,
+        under, limit,
         objCand: objCand, objKeys: {for (final k in objKeys) ...k});
   }
 
@@ -254,60 +263,9 @@ class SearchEngine {
     return out ?? const {};
   }
 
-  /// Docs whose text could contain the query: they must contain EVERY typed word
-  /// (as part of some indexed word). Intersecting all words keeps the set small, so the
-  /// exact check below always reaches the right file. null = can't narrow down (scan all).
-  Set<int>? _contentCandidates(List<String> words) {
-    final toks = words.map((w) => w.toLowerCase()).where((t) => t.length >= 2).toSet().toList();
-    if (toks.isEmpty) return null;
-
-    final perTok = [for (final t in toks) _wordsContaining(t)];
-    _tokCache
-      ..clear()
-      ..addAll({for (var i = 0; i < toks.length; i++) toks[i]: perTok[i]});
-    _tokCacheVocabLen = _vocab.length;
-
-    // Start from the rarest word, then keep only docs that also have each other word.
-    final sets = <Set<int>>[];
-    for (final words in perTok) {
-      final ids = <int>{};
-      for (final w in words) {
-        final post = _words[w];
-        if (post != null) ids.addAll(post);
-      }
-      if (ids.isEmpty) return const {};
-      sets.add(ids);
-    }
-    sets.sort((a, b) => a.length.compareTo(b.length));
-    final out = sets.first;
-    for (final s in sets.skip(1)) {
-      out.retainWhere(s.contains);
-      if (out.isEmpty) break;
-    }
-    return out;
-  }
-
   // Word lists from the previous keystroke: "100 yea" → "100 year" only re-filters them.
   final Map<String, List<String>> _tokCache = {};
   int _tokCacheVocabLen = 0;
-
-  /// Every indexed word that contains [tok].
-  List<String> _wordsContaining(String tok) {
-    for (final e in _tokCache.entries) {
-      if (tok.contains(e.key) && _tokCacheVocabLen <= _vocab.length) {
-        return [
-          for (final w in e.value)
-            if (w.contains(tok)) w,
-          for (var i = _tokCacheVocabLen; i < _vocab.length; i++)
-            if (_vocab[i].contains(tok)) _vocab[i],
-        ];
-      }
-    }
-    return [
-      for (final w in _vocab)
-        if (w.contains(tok)) w,
-    ];
-  }
 
   static double _score(IndexedFile f, bool inName, bool inContent, RegExp re, String qLower, int now) {
     var s = 0.0;
@@ -382,9 +340,104 @@ class SearchEngine {
   }
 }
 
+/// Docs whose text could contain the query: they must contain EVERY typed word (as part
+/// of some indexed word). Intersecting all words keeps the set small, so the exact check
+/// always reaches the right file. Scanning the vocabulary (hundreds of thousands of
+/// words) is done in resumable slices, so typing stays smooth on slow machines too.
+class _Candidates {
+  _Candidates(this.e, List<String> words)
+      : toks = words.map((w) => w.toLowerCase()).where((t) => t.length >= 2).toSet().toList();
+
+  final SearchEngine e;
+  final List<String> toks;
+  bool done = false;
+  bool scanAll = false; // no usable word: every file with text is checked
+  Set<int>? result;
+
+  final _perTok = <List<String>>[];
+  final _sets = <Set<int>>[];
+  int _t = 0;
+  // Current word: where its matching vocabulary words come from, and progress.
+  List<String>? _src; // last keystroke's list for a shorter word, or null = whole vocabulary
+  int _tail = 0, _end = 0, _i = 0, _mi = 0;
+  bool _scanning = true;
+  var _matched = <String>[];
+  var _ids = <int>{};
+
+  String _wordAt(int i) {
+    final src = _src;
+    if (src == null) return e._vocab[i];
+    return i < src.length ? src[i] : e._vocab[_tail + i - src.length];
+  }
+
+  void _startWord(String tok) {
+    _src = null;
+    for (final c in e._tokCache.entries) {
+      if (tok.contains(c.key) && e._tokCacheVocabLen <= e._vocab.length) {
+        _src = c.value;
+        _tail = e._tokCacheVocabLen; // plus words indexed since
+        break;
+      }
+    }
+    // The vocabulary only grows; words added while scanning are caught next keystroke.
+    _end = _src == null ? e._vocab.length : _src!.length + (e._vocab.length - _tail);
+    _i = 0;
+    _mi = 0;
+    _scanning = true;
+    _matched = [];
+    _ids = {};
+  }
+
+  /// Does work until [out] says the slice is used up; true when finished.
+  bool step(bool Function() out) {
+    if (done) return true;
+    if (toks.isEmpty) {
+      scanAll = true;
+      return done = true;
+    }
+    if (_t == 0 && _i == 0 && _mi == 0 && _scanning) _startWord(toks[0]);
+    while (_t < toks.length) {
+      final tok = toks[_t];
+      if (_scanning) {
+        while (_i < _end) {
+          final w = _wordAt(_i++);
+          if (w.contains(tok)) _matched.add(w);
+          if ((_i & 4095) == 0 && out()) return false;
+        }
+        _scanning = false;
+      }
+      while (_mi < _matched.length) {
+        final post = e._words[_matched[_mi++]];
+        if (post != null) _ids.addAll(post);
+        if (out()) return false; // a common word can list thousands of files
+      }
+      if (_ids.isEmpty) {
+        result = const {};
+        return done = true;
+      }
+      _perTok.add(_matched);
+      _sets.add(_ids);
+      if (++_t < toks.length) _startWord(toks[_t]);
+    }
+    e._tokCache
+      ..clear()
+      ..addAll({for (var i = 0; i < toks.length; i++) toks[i]: _perTok[i]});
+    e._tokCacheVocabLen = e._vocab.length;
+    // Start from the rarest word, then keep only docs that also have each other word.
+    _sets.sort((a, b) => a.length.compareTo(b.length));
+    final out0 = _sets.first;
+    for (final s in _sets.skip(1)) {
+      out0.retainWhere(s.contains);
+      if (out0.isEmpty) break;
+    }
+    result = out0;
+    return done = true;
+  }
+}
+
 /// One search in progress: scans names, then confirms candidate files' text, in slices.
 class _Run {
-  _Run(this.e, this.re, this.single, this.query, this.toks, this.cand, this.kinds, this.under, this.limit,
+  _Run(this.e, this.re, this.single, this.query, this.toks, this.candidates, this.kinds, this.under, this.limit,
       {required this.objCand, required this.objKeys})
       : qLower = toks.isEmpty ? query.toLowerCase() : toks.join(' ').toLowerCase();
 
@@ -393,7 +446,8 @@ class _Run {
   final String? single; // one typed word → fast plain "contains" on names
   final String query;
   final List<String> toks;
-  final Set<int>? cand; // null = check every file with text
+  final _Candidates candidates; // built in slices – a keystroke never blocks typing
+  Set<int>? cand; // null = check every file with text
   final Set<int> objCand; // images whose labels name everything typed
   final Set<String> objKeys; // label words the query asks for
   final Set<FileKind>? kinds;
@@ -436,11 +490,22 @@ class _Run {
         found.add(_Found(f, SearchEngine._score(f, true, inContent, re, qLower, now) + _objScore(objs), true, inContent,
             objects: objs));
         _textIds.add(id);
+        if (out()) return false; // its text was checked too – mind the time
       }
       if ((id & 1023) == 0 && out()) return false;
     }
 
-    // phase 2: text inside files – only candidates from the word index, all of them
+    // One typed character: file names only. Nearly every file's text has it, so
+    // checking them all would be slow and the list useless.
+    if (query.trim().length < 2) _toCheck ??= const [];
+
+    // phase 2a: which files can contain every typed word (from the word index)
+    if (_toCheck == null && !candidates.done) {
+      if (!candidates.step(out)) return false;
+      cand = candidates.scanAll ? null : candidates.result;
+    }
+
+    // phase 2b: text inside files – only candidates from the word index, all of them
     final list = _toCheck ??= [
       if (cand == null)
         for (var id = 0; id < docs.length; id++)
@@ -495,6 +560,7 @@ class _Run {
       objs.isEmpty ? 0 : 8 * objs.map((l) => l.confidence).reduce(max);
 
   SearchResult result({bool partial = false}) {
+    final limit = partial ? min(this.limit, 60) : this.limit;
     final kindCounts = <FileKind, int>{};
     for (final h in found) {
       kindCounts[h.f.kind] = (kindCounts[h.f.kind] ?? 0) + 1;
@@ -502,7 +568,7 @@ class _Run {
     final shown = kinds == null ? List.of(found) : found.where((h) => kinds!.contains(h.f.kind)).toList();
     // Images first, then videos, then documents, then the rest; best matches first in each group.
     shown.sort((a, b) {
-      final g = kindGroup(a.f.kind).compareTo(kindGroup(b.f.kind));
+      final g = a.group.compareTo(b.group);
       return g != 0 ? g : b.score.compareTo(a.score);
     });
     final highlights = [query, ...toks];
@@ -521,9 +587,9 @@ class _Run {
                 _ => MatchSource.content,
               },
           },
-          h.inContent ? SearchEngine._snippetAt(h.f, re) : null,
+          () => h.inContent ? SearchEngine._snippetAt(h.f, re) : null,
           highlights,
-          moments: h.inContent ? SearchEngine._momentsOf(h.f, re) : const [],
+          moments: h.inContent ? () => SearchEngine._momentsOf(h.f, re) : null,
           objects: h.objects,
         ),
     ];
@@ -532,8 +598,10 @@ class _Run {
 }
 
 class _Found {
-  _Found(this.f, this.score, this.inName, this.inContent, {this.objects = const []});
+  _Found(this.f, this.score, this.inName, this.inContent, {this.objects = const []})
+      : group = _Run.kindGroup(f.kind);
   final IndexedFile f;
+  final int group; // images, videos, documents… – see _Run.kindGroup
   final double score;
   final bool inName, inContent;
   final List<ImageLabel> objects;

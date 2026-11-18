@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 
 import 'core/constants.dart';
@@ -96,8 +97,11 @@ class AppController extends ChangeNotifier {
   DateTime _lastNotify = DateTime(2000);
   DateTime _lastAutoScan = DateTime(2000);
 
-  /// Background reading uses half the CPU cores (2–4), leaving the rest for the user.
-  static final int _bgWorkers = (Platform.numberOfProcessors ~/ 2).clamp(2, 4);
+  /// Background reading stays gentle – a quarter of the cores for documents (1–3) and
+  /// 1–2 picture readers – so the computer stays responsive. The first analysis, which
+  /// the user waits for, uses more.
+  static final int _bgWorkers = (Platform.numberOfProcessors ~/ 4).clamp(1, 3);
+  static final int _bgOcrLanes = (Platform.numberOfProcessors ~/ 4).clamp(1, 2);
 
   bool get needsOnboarding => !store.initialDone;
 
@@ -135,6 +139,9 @@ class AppController extends ChangeNotifier {
       startBackground();
       unawaited(askSystemPermissions()); // speech, if it could never be asked before
     }
+    // The first full re-scan after start waits a minute (see kFirstRescanDelay).
+    final every = watcher.active ? kWatchedRescanInterval : kAutoScanInterval;
+    _lastAutoScan = DateTime.now().subtract(every).add(kFirstRescanDelay);
     _autoScanTimer ??=
         Timer.periodic(const Duration(seconds: 3), (_) => _autoScan());
   }
@@ -237,6 +244,7 @@ class AppController extends ChangeNotifier {
           scan: scanDue,
           analyze: readFiles,
           maxWorkers: _bgWorkers,
+          ocrReaders: _bgOcrLanes,
           onProgress: (pr) {
             if (pr.phase == IndexPhase.analysing) _onProgress(pr);
           },
@@ -251,10 +259,19 @@ class AppController extends ChangeNotifier {
     }());
   }
 
-  /// Saves the index now – when the app is quitting.
-  Future<void> saveNow() async {
+  static const _window = MethodChannel('smart_file_search/window');
+
+  /// The app is quitting: the window disappears at once, background reading stops,
+  /// and the index is saved only if something changed since the last save – usually
+  /// nothing has (runs save every minute), so the app is gone right away.
+  Future<void> prepareToQuit() async {
+    try {
+      await _window.invokeMethod<void>('hide');
+    } catch (_) {}
     if (!ready) return;
-    await store.save().timeout(const Duration(seconds: 20), onTimeout: () {});
+    // Reading a scanned PDF can take a while to stop – don't wait for it.
+    await indexer.cancel().timeout(const Duration(seconds: 2), onTimeout: () {});
+    if (store.dirty) await store.save();
   }
 
   Future<void> refreshRoots() async {
@@ -343,6 +360,7 @@ class AppController extends ChangeNotifier {
       }
     }
     if (!changed) return;
+    store.dirty = true;
 
     var needRun = false;
     for (final f in toRead) {
@@ -610,6 +628,7 @@ class AppController extends ChangeNotifier {
           skipPaths: const [],
           scan: false,
           maxWorkers: _bgWorkers,
+          ocrReaders: _bgOcrLanes,
           onProgress: _onProgress,
         );
       } finally {

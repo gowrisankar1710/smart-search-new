@@ -21,6 +21,17 @@ class MainFlutterWindow: NSWindow {
     RegisterGeneratedPlugins(registry: flutterViewController)
     VisionOcr.register(with: flutterViewController.engine.binaryMessenger)
     VideoAnalysis.register(with: flutterViewController.engine.binaryMessenger)
+    // Quitting: the window goes away at once while the index is saved behind it.
+    let windowChannel = FlutterMethodChannel(
+      name: "smart_file_search/window", binaryMessenger: flutterViewController.engine.binaryMessenger)
+    windowChannel.setMethodCallHandler { [weak self] call, result in
+      if call.method == "hide" {
+        self?.orderOut(nil)
+        result(nil)
+      } else {
+        result(FlutterMethodNotImplemented)
+      }
+    }
 
     super.awakeFromNib()
   }

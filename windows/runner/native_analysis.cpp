@@ -51,6 +51,7 @@ std::mutex g_reply_mutex;
 std::deque<std::function<void()>> g_replies;
 std::unique_ptr<flutter::MethodChannel<EncodableValue>> g_ocr_channel;
 std::unique_ptr<flutter::MethodChannel<EncodableValue>> g_video_channel;
+std::unique_ptr<flutter::MethodChannel<EncodableValue>> g_window_channel;
 std::atomic<bool> g_video_cancelled{false};
 
 // ------------------------------------------------------------------ threading
@@ -68,6 +69,8 @@ void Reply(std::function<void()> fn) {
 // blocking on WinRT async calls (.get()) is allowed.
 void RunInBackground(std::function<void()> work) {
   std::thread([work = std::move(work)]() {
+    // Below normal: the PC stays responsive while files are read.
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
     winrt::init_apartment(winrt::apartment_type::multi_threaded);
     try {
       work();
@@ -101,6 +104,7 @@ class ImagePool {
   }
 
   void Loop() {
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
     winrt::init_apartment(winrt::apartment_type::multi_threaded);
     for (;;) {
       std::function<void()> work;
@@ -600,6 +604,17 @@ void Register(flutter::BinaryMessenger* messenger, HWND window) {
   g_video_channel =
       std::make_unique<flutter::MethodChannel<EncodableValue>>(messenger, "smart_file_search/video", &codec);
   g_video_channel->SetMethodCallHandler(HandleVideo);
+  // Quitting: the window goes away at once while the index is saved behind it.
+  g_window_channel =
+      std::make_unique<flutter::MethodChannel<EncodableValue>>(messenger, "smart_file_search/window", &codec);
+  g_window_channel->SetMethodCallHandler([](const flutter::MethodCall<EncodableValue>& call, std::unique_ptr<Result> result) {
+    if (call.method_name() == "hide") {
+      ShowWindow(g_window, SW_HIDE);
+      result->Success();
+    } else {
+      result->NotImplemented();
+    }
+  });
 }
 
 bool HandleMessage(UINT message) {

@@ -15,7 +15,9 @@ void main() {
   final controller = AppController();
   // Quitting saves what was read since the last save, so the next start doesn't read it again.
   appLifecycle = AppLifecycleListener(onExitRequested: () async {
-    await controller.saveNow();
+    // The window is hidden at once; whatever is left gets 10 s, then the app exits
+    // regardless. An unfinished save never replaces the last complete one.
+    await controller.prepareToQuit().timeout(const Duration(seconds: 10), onTimeout: () {});
     return AppExitResponse.exit;
   });
   runApp(SmartSearchApp(controller: controller));

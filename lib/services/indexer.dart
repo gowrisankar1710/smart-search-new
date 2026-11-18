@@ -155,6 +155,7 @@ class Indexer {
     bool videos = true,
     bool quick = false,
     int? maxWorkers,
+    int? ocrReaders,
   }) async {
     if (_running) throw StateError('Indexer already running');
     _running = true;
@@ -176,7 +177,7 @@ class Indexer {
     // Background runs save often, so quitting mid-way never means reading files again.
     var unsaved = false;
     final saveTimer = deadline == null
-        ? Timer.periodic(const Duration(minutes: 1), (_) {
+        ? Timer.periodic(const Duration(minutes: 5), (_) {
             if (!unsaved) return;
             unsaved = false;
             store.save();
@@ -184,8 +185,10 @@ class Indexer {
         : null;
 
     final isMobile = Platform.isAndroid || Platform.isIOS;
+    // Half the cores at most, even for the first analysis: the other half keeps the
+    // computer usable (all but one core froze slower PCs).
     final nWorkers = maxWorkers ??
-        (isMobile ? 2 : (Platform.numberOfProcessors - 1).clamp(1, 6));
+        (isMobile ? 2 : (Platform.numberOfProcessors ~/ 2).clamp(1, 4));
 
     var phase = IndexPhase.preparing;
     var found = store.files.length;
@@ -206,7 +209,7 @@ class Indexer {
     var lastEmit = DateTime(2000);
 
     void emit({bool force = false}) {
-      if (analysed > 0) unsaved = true;
+      if (analysed > 0) unsaved = store.dirty = true;
       final now = DateTime.now();
       if (!force && now.difference(lastEmit).inMilliseconds < 120) return;
       lastEmit = now;
@@ -266,6 +269,7 @@ class Indexer {
               f.status = IndexStatus.nameOnly;
             }
             store.files[path] = f;
+            store.dirty = true;
             engine.upsert(f, contentTf: const {});
             current = path;
           }
@@ -280,6 +284,7 @@ class Indexer {
               .where((k) =>
                   !seen.contains(k) && rootPaths.any((r) => p.isWithin(r, k)))
               .toList();
+          if (gone.isNotEmpty) store.dirty = true;
           for (final k in gone) {
             final f = store.files.remove(k);
             if (f != null && f.isPending) pending--;
@@ -577,7 +582,7 @@ class Indexer {
           for (final w in List.of(_workers)) textLane(w),
           if (videoQ.isNotEmpty) videoLane(),
           if (ocrQ.isNotEmpty || (pdfOcr && textQ.any((f) => f.ext == 'pdf')))
-            for (var i = 0; i < ocr.parallelism; i++) ocrLaneCounted(),
+            for (var i = 0; i < (ocrReaders ?? ocr.parallelism); i++) ocrLaneCounted(),
         ];
 
         var spawning = 0;
@@ -613,7 +618,7 @@ class Indexer {
               }
               ocrQ.add(f);
               if (ocrLanes == 0) {
-                for (var i = 0; i < ocr.parallelism; i++) {
+                for (var i = 0; i < (ocrReaders ?? ocr.parallelism); i++) {
                   lanes.add(ocrLaneCounted());
                 }
               }

@@ -12,7 +12,12 @@ const int kMaxFiles = 400000;
 const Duration kAutoScanInterval = Duration(seconds: 30);
 
 /// With live folder watching on, the full re-scan is only a safety net for missed events.
-const Duration kWatchedRescanInterval = Duration(minutes: 10);
+/// Walking whole drives is heavy, so it's rare.
+const Duration kWatchedRescanInterval = Duration(minutes: 60);
+
+/// After start, the first full re-scan waits this long: the app is responsive first,
+/// and the folder watcher reports anything that changes meanwhile.
+const Duration kFirstRescanDelay = Duration(minutes: 1);
 
 /// Bump when text extraction improves so files read by an older version are re-read.
 /// v2: no 40k-character cut-off, 300 PDF pages (was 40), numbers in spreadsheet cells.
