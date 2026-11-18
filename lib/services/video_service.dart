@@ -18,8 +18,8 @@ abstract class VideoAnalyzer {
 
   /// Timestamped text of the video: one run per source (subtitles, speech, on-screen
   /// text), each in time order. Runs are never interleaved, so a phrase stays contiguous.
-  /// Empty when nothing was found.
-  Future<List<VideoSegment>> analyze(String path);
+  /// Empty when nothing was found. [onProgress] gets how far reading has got, 0–1.
+  Future<List<VideoSegment>> analyze(String path, {void Function(double fraction)? onProgress});
 
   /// Stops a running [analyze] early (it then returns what it has read so far).
   void cancel() {}
@@ -36,7 +36,8 @@ class SubtitleVideoAnalyzer implements VideoAnalyzer {
   Future<bool> readsMedia() async => false;
 
   @override
-  Future<List<VideoSegment>> analyze(String path) async => readSidecarSubtitles(path);
+  Future<List<VideoSegment>> analyze(String path, {void Function(double fraction)? onProgress}) async =>
+      readSidecarSubtitles(path);
 
   @override
   void cancel() {}
@@ -50,6 +51,18 @@ class SubtitleVideoAnalyzer implements VideoAnalyzer {
 class NativeVideoAnalyzer implements VideoAnalyzer {
   static const _channel = MethodChannel('smart_file_search/video');
   bool? _native;
+
+  /// The video being read and who wants its progress (the native side reads one at a time).
+  String? _path;
+  void Function(double)? _onProgress;
+
+  NativeVideoAnalyzer() {
+    _channel.setMethodCallHandler((call) async {
+      if (call.method != 'progress') return;
+      final args = (call.arguments as Map).cast<Object?, Object?>();
+      if (args['path'] == _path) _onProgress?.call((args['fraction'] as num).toDouble());
+    });
+  }
 
   /// AVFoundation can't open these containers – only their subtitle files are read.
   /// (Windows Media Foundation decides for itself; unreadable files just yield nothing.)
@@ -70,12 +83,23 @@ class NativeVideoAnalyzer implements VideoAnalyzer {
   }
 
   @override
-  Future<List<VideoSegment>> analyze(String path) async {
+  Future<List<VideoSegment>> analyze(String path, {void Function(double fraction)? onProgress}) async {
     final subs = await readSidecarSubtitles(path);
     if (_unsupported.contains(extensionOf(path)) || !await readsMedia()) return subs;
-    final raw = await _channel.invokeListMethod<Map<Object?, Object?>>(
-            'analyze', {'path': path, 'budgetSeconds': kVideoAnalysisLimit.inSeconds.toDouble()}) ??
-        const [];
+    _path = path;
+    _onProgress = onProgress;
+    final List<Map<Object?, Object?>> raw;
+    try {
+      raw = await _channel.invokeListMethod<Map<Object?, Object?>>(
+              'analyze', {'path': path, 'budgetSeconds': kVideoAnalysisLimit.inSeconds.toDouble()}) ??
+          const [];
+    } finally {
+      if (_path == path) {
+        _path = null;
+        _onProgress = null;
+      }
+    }
+    onProgress?.call(1);
     final media = [
       for (final m in raw)
         if ((m['text'] as String?)?.trim().isNotEmpty ?? false)

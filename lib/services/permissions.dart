@@ -21,8 +21,8 @@ Future<bool> requestStorageAccess() async {
 // ------------------------------------------------------------------ macOS pop-ups
 
 /// macOS asks the user before an app reads Desktop / Documents / Downloads, and before it
-/// uses speech recognition. The app explains both on its own "Allow access" screen first
-/// and brings the system prompts up only from there.
+/// uses speech recognition. The app brings these system prompts up once, when the user
+/// presses Start (see AppController.askSystemPermissions).
 bool get hasSystemPrompts => Platform.isMacOS;
 
 enum SpeechAccess { granted, denied, notAsked, unavailable }

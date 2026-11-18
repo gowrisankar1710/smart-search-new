@@ -47,6 +47,32 @@ void main() {
     expect(engine.find('receipt total').hits.single.file.path, pdf.path);
   });
 
+  test('quick pass leaves large files for the background run, which reads them', () async {
+    final dir = await Directory.systemTemp.createTemp('quick_pass');
+    addTearDown(() => dir.delete(recursive: true));
+    final small = File('${dir.path}/small.png')..writeAsBytesSync([1, 2, 3]);
+    final big = File('${dir.path}/huge.png')..writeAsBytesSync(List.filled((8 << 20) + 1, 7));
+    final store = IndexStore();
+    final engine = SearchEngine();
+    final indexer = Indexer(store, engine, _FakeOcrEngine());
+
+    final quick = await indexer.run(
+      roots: [ScanRoot(dir.path, 'test')],
+      skipPaths: const [],
+      onProgress: (_) {},
+      quick: true,
+    );
+    expect(store.files[small.path]!.status, IndexStatus.indexed);
+    expect(store.files[big.path]!.status, IndexStatus.pending);
+    expect(quick.remaining, 0); // the Timer screen isn't held up by it
+    expect(quick.deferred, 1);
+
+    final progress = <IndexProgress>[];
+    await indexer.run(roots: const [], skipPaths: const [], scan: false, onProgress: progress.add);
+    expect(store.files[big.path]!.status, IndexStatus.indexed);
+    expect(progress.last.fraction, 1);
+  });
+
   test('every file ends up read: unknown text formats sniffed, binaries settled', () async {
     final dir = await Directory.systemTemp.createTemp('sniff_test');
     addTearDown(() => dir.delete(recursive: true));
@@ -67,6 +93,32 @@ void main() {
     expect(engine.find('galaxy').hits.single.file.path, arb.path);
     expect(engine.find('compile').hits.single.file.path, mk.path);
     expect(store.files[blob.path]!.content, isEmpty);
+  });
+
+  test('results list images first, then videos, then documents, then the rest', () {
+    final engine = SearchEngine();
+    IndexedFile mk(String path, String text) => IndexedFile(path: path, size: 1, modifiedMs: 0)
+      ..content = text
+      ..source = ContentSource.text
+      ..status = IndexStatus.indexed;
+    // Each is a stronger match than the next (name + content beats content only).
+    for (final f in [
+      mk('/x/invoice notes.txt', 'invoice'),
+      mk('/x/invoice.pdf', 'invoice'),
+      mk('/x/scan.png', 'invoice'),
+      mk('/x/report.docx', 'invoice total'),
+      IndexedFile(path: '/x/call.mp4', size: 1, modifiedMs: 0)
+        ..segments = const [VideoSegment(12, 'the invoice is due')]
+        ..source = ContentSource.video
+        ..status = IndexStatus.indexed,
+    ]) {
+      engine.upsert(f);
+    }
+    final order = engine.find('invoice').hits.map((h) => h.file.path.split('/').last).toList();
+    expect(order.take(2), ['scan.png', 'call.mp4']);
+    expect(order.indexOf('call.mp4'), lessThan(order.indexOf('invoice.pdf')));
+    expect(order.indexOf('invoice.pdf'), lessThan(order.indexOf('invoice notes.txt')));
+    expect(order.indexOf('report.docx'), lessThan(order.indexOf('invoice notes.txt')));
   });
 
   test('exact mode lists only files containing the exact words', () {

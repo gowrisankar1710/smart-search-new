@@ -255,8 +255,23 @@ enum VideoAnalysis {
   /// Audio is recognised in chunks of this length (keeps memory flat, allows stopping).
   private static let speechChunk = 60.0
 
+  private static var channel: FlutterMethodChannel?
+
+  /// How far the video being read has got, 0–1 – the Search screen shows it as a percentage.
+  /// Sent at most every 1 %.
+  private static func reporter(_ path: String) -> (Double) -> Void {
+    var last = -1.0
+    return { fraction in
+      let f = min(max(fraction, 0), 1)
+      guard f - last >= 0.01 || (f >= 1 && last < 1) else { return }
+      last = f
+      DispatchQueue.main.async { channel?.invokeMethod("progress", arguments: ["path": path, "fraction": f]) }
+    }
+  }
+
   static func register(with messenger: FlutterBinaryMessenger) {
     let channel = FlutterMethodChannel(name: "smart_file_search/video", binaryMessenger: messenger)
+    Self.channel = channel
     channel.setMethodCallHandler { call, result in
       switch call.method {
       case "isAvailable":
@@ -267,7 +282,7 @@ enum VideoAnalysis {
       case "speechStatus":
         result(speechStatus())
       case "requestSpeech":
-        // Shown only after the app's own "Allow access" screen – never mid-analysis.
+        // Asked once when the user presses Start – never mid-analysis.
         guard hasUsageDescription else { result(false); return }
         SFSpeechRecognizer.requestAuthorization { status in
           DispatchQueue.main.async { result(status == .authorized) }
@@ -296,14 +311,22 @@ enum VideoAnalysis {
     let deadline = Date().addingTimeInterval(budget)
     func stop() -> Bool { cancelled || Date() > deadline }
 
-    let frames = frameText(asset, duration: duration, stop: stop)
-    let words = stop() ? [] : speech(asset, duration: duration, stop: stop)
+    // Speech takes longer than reading frames: frames are the first 40 % when both run.
+    let report = reporter(path)
+    let speaks = !asset.tracks(withMediaType: .audio).isEmpty && authorized()
+    let frameShare = speaks ? 0.4 : 1.0
+    report(0)
+    let frames = frameText(asset, duration: duration, stop: stop) { report($0 * frameShare) }
+    let words = stop() || !speaks
+      ? [] : speech(asset, duration: duration, stop: stop) { report(frameShare + $0 * (1 - frameShare)) }
     return words + frames
   }
 
   // ---------------------------------------------------------------- on-screen text
 
-  private static func frameText(_ asset: AVURLAsset, duration: Double, stop: () -> Bool) -> [[String: Any]] {
+  private static func frameText(
+    _ asset: AVURLAsset, duration: Double, stop: () -> Bool, progress: (Double) -> Void
+  ) -> [[String: Any]] {
     guard !asset.tracks(withMediaType: .video).isEmpty else { return [] }
     let gen = AVAssetImageGenerator(asset: asset)
     gen.appliesPreferredTrackTransform = true
@@ -317,6 +340,7 @@ enum VideoAnalysis {
     var previous = Set<String>()
     var t = min(0.5, duration / 2)
     while t < duration, !stop() {
+      progress(t / duration)
       autoreleasepool {
         var actual = CMTime.zero
         guard let image = try? gen.copyCGImage(at: CMTime(seconds: t, preferredTimescale: 600), actualTime: &actual)
@@ -338,8 +362,11 @@ enum VideoAnalysis {
 
   // ---------------------------------------------------------------- speech
 
+  /// Speech permission may be touched only when this app answers for itself – otherwise
+  /// macOS checks the launcher's Info.plist and kills the app (see ResponsibleProcess).
   private static var hasUsageDescription: Bool {
-    Bundle.main.object(forInfoDictionaryKey: "NSSpeechRecognitionUsageDescription") is String
+    ResponsibleProcess.isSelf
+      && Bundle.main.object(forInfoDictionaryKey: "NSSpeechRecognitionUsageDescription") is String
   }
 
   private static func speechStatus() -> String {
@@ -351,13 +378,15 @@ enum VideoAnalysis {
     }
   }
 
-  /// Speech is used only once the user allowed it on the app's "Allow access" screen;
+  /// Speech is used only once the user allowed it when the app started;
   /// a background video never brings up the system prompt by itself.
   private static func authorized() -> Bool {
     hasUsageDescription && SFSpeechRecognizer.authorizationStatus() == .authorized
   }
 
-  private static func speech(_ asset: AVURLAsset, duration: Double, stop: () -> Bool) -> [[String: Any]] {
+  private static func speech(
+    _ asset: AVURLAsset, duration: Double, stop: () -> Bool, progress: (Double) -> Void
+  ) -> [[String: Any]] {
     guard !asset.tracks(withMediaType: .audio).isEmpty, authorized(),
           let recognizer = SFSpeechRecognizer(), recognizer.isAvailable,
           recognizer.supportsOnDeviceRecognition
@@ -371,6 +400,7 @@ enum VideoAnalysis {
     var out: [[String: Any]] = []
     var start = 0.0
     while start < duration, !stop() {
+      progress(start / duration)
       let length = min(speechChunk, duration - start)
       if exportAudio(asset, from: start, length: length, to: tmp) {
         out += recognize(tmp, offset: start, with: recognizer)

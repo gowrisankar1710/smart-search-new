@@ -6,7 +6,6 @@ import '../app_controller.dart';
 import '../services/locations.dart';
 import '../services/permissions.dart';
 import 'analysis_view.dart';
-import 'permission_sheet.dart';
 import 'settings_sheet.dart';
 import 'format.dart';
 
@@ -32,7 +31,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     final granted = await requestStorageAccess();
     await c.refreshRoots();
     if (!mounted) return;
-    await maybeShowPermissionSheet(context, c); // macOS: the app's own screen, then the system prompts
+    await c.askSystemPermissions(); // macOS: the system prompts, before the analysis starts
     if (!mounted) return;
     if (!granted) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(

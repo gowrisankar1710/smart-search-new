@@ -30,6 +30,11 @@ class IndexProgress {
     this.mbPerSecond = 0,
     this.workers = 0,
     this.current,
+    this.deferred = 0,
+    this.video,
+    this.videoFraction = 0,
+    this.videoNumber = 0,
+    this.videoCount = 0,
   });
   final IndexPhase phase;
   final int found;
@@ -41,6 +46,22 @@ class IndexProgress {
   final double mbPerSecond;
   final int workers;
   final String? current;
+
+  /// Large files a quick pass left for the background run that follows it.
+  final int deferred;
+
+  /// The video being read right now, how far it has got (0–1), and which one of how
+  /// many this run reads. Null while no video is being read.
+  final String? video;
+  final double videoFraction;
+  final int videoNumber;
+  final int videoCount;
+
+  /// Share of this run's files read so far, 0–1.
+  double get fraction {
+    final total = analysed + remaining;
+    return total == 0 ? 1 : (analysed / total).clamp(0.0, 1.0);
+  }
 }
 
 class IndexSummary {
@@ -51,6 +72,7 @@ class IndexSummary {
     required this.elapsed,
     required this.filesPerSecond,
     required this.hitTimeLimit,
+    this.deferred = 0,
   });
   final int found;
   final int analysed;
@@ -58,6 +80,9 @@ class IndexSummary {
   final Duration elapsed;
   final double filesPerSecond;
   final bool hitTimeLimit;
+
+  /// Large files left for the background run (quick passes only).
+  final int deferred;
 }
 
 /// Time-budgeted indexing pipeline.
@@ -71,7 +96,9 @@ class IndexSummary {
 ///     can't finish before the deadline – they stay queued for background analysis.
 ///  4. At the deadline a timer kills every worker: the limit is hard, not best-effort.
 ///  5. Videos (on-screen text, speech, subtitles) take minutes each, so they are read only
-///     in unbudgeted background runs, one at a time, newest first.
+///     in unbudgeted background runs, one at a time, recent & small first.
+///  6. A quick pass (the Timer screen) reads only files up to [quickReadBytes]; bigger
+///     ones stay queued and the background run after it reads them, smallest first.
 class Indexer {
   Indexer(this.store, this.engine, this.ocr, {VideoAnalyzer? video})
       : video = video ?? SubtitleVideoAnalyzer();
@@ -126,6 +153,7 @@ class Indexer {
     bool scan = true,
     bool analyze = true,
     bool videos = true,
+    bool quick = false,
     int? maxWorkers,
   }) async {
     if (_running) throw StateError('Indexer already running');
@@ -145,8 +173,14 @@ class Indexer {
         : deadline.difference(DateTime.now());
     final killTimer =
         deadline == null ? null : Timer(remainingTime(), _stopAll);
+    // Background runs save often, so quitting mid-way never means reading files again.
+    var unsaved = false;
     final saveTimer = deadline == null
-        ? Timer.periodic(const Duration(minutes: 3), (_) => store.save())
+        ? Timer.periodic(const Duration(minutes: 1), (_) {
+            if (!unsaved) return;
+            unsaved = false;
+            store.save();
+          })
         : null;
 
     final isMobile = Platform.isAndroid || Platform.isIOS;
@@ -160,10 +194,19 @@ class Indexer {
     var pending = store.files.values.where((f) => f.isPending).length;
     var activeWorkers = 0;
     String? current;
+    String? videoPath;
+    var videoFraction = 0.0;
+    var videoNumber = 0;
+    var videoCount = 0;
+    // Quick pass: files too big to hold Search back for. They stay pending for later.
+    final deferred = <IndexedFile>{};
+    bool tooBig(IndexedFile f, {bool ocr = false}) =>
+        quick && f.size > quickReadBytes(f.ext, ocr: ocr);
     final analysisClock = Stopwatch();
     var lastEmit = DateTime(2000);
 
     void emit({bool force = false}) {
+      if (analysed > 0) unsaved = true;
       final now = DateTime.now();
       if (!force && now.difference(lastEmit).inMilliseconds < 120) return;
       lastEmit = now;
@@ -179,6 +222,11 @@ class Indexer {
         mbPerSecond: secs > 0.3 ? bytesDone / 1048576 / secs : 0,
         workers: activeWorkers,
         current: current,
+        deferred: deferred.length,
+        video: videoPath,
+        videoFraction: videoFraction,
+        videoNumber: videoNumber,
+        videoCount: videoCount,
       ));
     }
 
@@ -256,6 +304,18 @@ class Indexer {
             final rb = nowMs - b.modifiedMs < recentMs ? 0 : 1;
             return ra != rb ? ra - rb : units(a).compareTo(units(b));
           });
+        // Recent files first, then smallest first: the most files readable soonest.
+        int bySize(IndexedFile a, IndexedFile b) {
+          final ra = nowMs - a.modifiedMs < recentMs ? 0 : 1;
+          final rb = nowMs - b.modifiedMs < recentMs ? 0 : 1;
+          return ra != rb ? ra - rb : a.size.compareTo(b.size);
+        }
+
+        textQ.removeWhere((f) {
+          if (!tooBig(f)) return false;
+          if (deferred.add(f)) pending--;
+          return true;
+        });
 
         final ocrOk = await ocr.isAvailable();
         bool ocrSized(IndexedFile f) => f.size <= 30 * 1024 * 1024;
@@ -274,13 +334,17 @@ class Indexer {
         final ocrQ = <IndexedFile>[];
         for (final f in store.files.values.where((f) => f.needsOcr)) {
           if (ocrOk && ocrSized(f)) {
-            ocrQ.add(f);
+            if (tooBig(f, ocr: true)) {
+              if (deferred.add(f)) pending--;
+            } else {
+              ocrQ.add(f);
+            }
           } else {
             f.status = IndexStatus.nameOnly;
             pending--;
           }
         }
-        ocrQ.sort((a, b) => b.modifiedMs.compareTo(a.modifiedMs));
+        ocrQ.sort(bySize);
         final pdfOcr = ocrOk && ocr.readsPdf;
 
         analysisClock.start();
@@ -363,8 +427,12 @@ class Indexer {
                   f
                     ..source = ContentSource.ocr
                     ..status = IndexStatus.pending;
-                  ocrQ.add(f);
-                  pending++;
+                  if (tooBig(f, ocr: true)) {
+                    deferred.add(f); // many pages to OCR – the background run reads it
+                  } else {
+                    ocrQ.add(f);
+                    pending++;
+                  }
                 }
                 analysed++;
                 pending--;
@@ -437,8 +505,7 @@ class Indexer {
         // don't count them as left to read; they stay queued for the next run.
         final readVideos = videos && deadline == null;
         final videoQ = readVideos
-            ? (store.files.values.where((f) => f.needsVideo).toList()
-              ..sort((a, b) => b.modifiedMs.compareTo(a.modifiedMs)))
+            ? (store.files.values.where((f) => f.needsVideo).toList()..sort(bySize))
             : <IndexedFile>[];
         if (!readVideos) pending -= store.files.values.where((f) => f.needsVideo).length;
         var vi = 0;
@@ -463,23 +530,31 @@ class Indexer {
             final f = videoQ[vi++];
             if (f.status != IndexStatus.pending) continue;
             current = f.path;
+            videoPath = f.path;
+            videoFraction = 0;
+            videoNumber++;
+            videoCount = videoNumber + videoQ.skip(vi).where((v) => v.status == IndexStatus.pending).length;
             emit(force: true);
             busy++;
             try {
-              final segs = await video
-                  .analyze(f.path)
-                  .timeout(kVideoAnalysisLimit + const Duration(minutes: 1));
+              final segs = await video.analyze(f.path, onProgress: (x) {
+                if (videoPath != f.path) return;
+                videoFraction = x;
+                emit(force: true); // the native side already sends at most every 1 %
+              }).timeout(kVideoAnalysisLimit + const Duration(minutes: 1));
               if (_cancelled) return; // stopped part-way – stays queued
               f
                 ..segments = segs
                 ..source = ContentSource.video
                 ..status = segs.isEmpty ? IndexStatus.nameOnly : IndexStatus.indexed;
               engine.upsert(f);
+              unawaited(store.save()); // a video takes minutes: keep it
             } catch (_) {
               if (_cancelled) return;
               f.status = IndexStatus.failed;
             } finally {
               busy--;
+              videoPath = null;
             }
             analysed++;
             pending--;
@@ -526,6 +601,7 @@ class Indexer {
         if (live) {
           _enqueue = (f) {
             if (timeUp()) return false;
+            if (tooBig(f, ocr: f.needsOcr)) return false; // the background run after this reads it
             if (f.needsVideo) {
               if (!readVideos) return false; // the next run reads it
               videoQ.add(f);
@@ -578,7 +654,7 @@ class Indexer {
     phase = IndexPhase.done;
     if (analyze) store.lastRun = DateTime.now();
     final left = store.files.values
-        .where((f) => f.isPending && (videos || !f.needsVideo))
+        .where((f) => f.isPending && (videos || !f.needsVideo) && !deferred.contains(f))
         .length;
     pending = left;
     final secs = max(0.001, analysisClock.elapsedMilliseconds / 1000);
@@ -592,6 +668,7 @@ class Indexer {
       elapsed: sw.elapsed,
       filesPerSecond: analysed / secs,
       hitTimeLimit: deadline != null && left > 0,
+      deferred: deferred.where((f) => f.isPending).length,
     );
   }
 }

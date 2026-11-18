@@ -1,3 +1,5 @@
+import 'dart:ui' show AppExitResponse;
+
 import 'package:flutter/material.dart';
 
 import 'app_controller.dart';
@@ -5,9 +7,17 @@ import 'ui/home_screen.dart';
 import 'ui/onboarding_screen.dart';
 import 'ui/theme.dart';
 
+/// Kept for the app's lifetime: saves the index when the app quits.
+late final AppLifecycleListener appLifecycle;
+
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   final controller = AppController();
+  // Quitting saves what was read since the last save, so the next start doesn't read it again.
+  appLifecycle = AppLifecycleListener(onExitRequested: () async {
+    await controller.saveNow();
+    return AppExitResponse.exit;
+  });
   runApp(SmartSearchApp(controller: controller));
   controller.init();
 }
@@ -48,6 +58,9 @@ class _Splash extends StatelessWidget {
           Icon(Icons.manage_search_rounded, size: 56, color: cs.primary),
           const SizedBox(height: 16),
           const SizedBox(width: 120, child: LinearProgressIndicator()),
+          const SizedBox(height: 14),
+          Text('Opening your search index…',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
         ]),
       ),
     );

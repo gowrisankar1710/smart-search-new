@@ -14,6 +14,7 @@ import 'services/folder_watcher.dart';
 import 'services/indexer.dart';
 import 'services/locations.dart';
 import 'services/ocr_service.dart';
+import 'services/permissions.dart';
 import 'services/search_engine.dart';
 import 'services/video_service.dart';
 
@@ -34,9 +35,24 @@ class CategoryCount {
 class RecentAdd {
   RecentAdd(this.path, this.category, this.at);
   final String path;
-  final FileCategory category;
+
+  /// Documents / images / videos; null for files known by name only (archives, audio…).
+  final FileCategory? category;
   final DateTime at;
   String get name => p.basename(path);
+  FileKind get kind => kindForExt(extensionOf(path));
+}
+
+/// Per sidebar category (by file kind): files with something inside to read, how many
+/// still wait, and how far the one being read has got – the Search screen's cards.
+class KindProgress {
+  int total = 0;
+  int left = 0;
+
+  /// Part of a file read so far (a video being watched), 0–1.
+  double partial = 0;
+  int get done => total - left;
+  double get fraction => total == 0 ? 1 : ((done + partial) / total).clamp(0.0, 1.0);
 }
 
 /// The numbers shown by the Search screen's timing strip and the Timer screen.
@@ -69,6 +85,10 @@ class AppController extends ChangeNotifier {
   bool ready = false;
   List<ScanRoot> roots = const [];
   IndexProgress? backgroundProgress;
+
+  /// After start: (files loaded, total) while the saved text inside files is loaded into
+  /// the search index. Names are searchable already. Null once loaded.
+  (int, int)? contentLoading;
   Timer? _autoScanTimer;
 
   /// Bumped whenever a run finishes, so open searches can refresh.
@@ -86,13 +106,34 @@ class AppController extends ChangeNotifier {
     _upgradeOcr();
     _requeueSniffable();
     _upgradeContent();
+    unawaited(_checkSpeech());
+    unawaited(_checkEngines());
     roots = await Locations.roots(store.extraRoots);
-    await engine.rebuild(store.files.values);
-    ready = true;
+    // The app opens once names are searchable; the text inside files loads in after.
+    var lastLoadNotify = DateTime(2000);
+    await engine.rebuild(
+      store.files.values,
+      onNamesReady: () {
+        ready = true;
+        notifyListeners();
+      },
+      onContent: (done, total) {
+        contentLoading = done < total ? (done, total) : null;
+        final now = DateTime.now();
+        if (now.difference(lastLoadNotify).inMilliseconds > 500) {
+          lastLoadNotify = now;
+          revision++; // open searches pick up the text loaded so far
+          notifyListeners();
+        }
+      },
+    );
+    contentLoading = null;
+    revision++;
     notifyListeners();
     if (!needsOnboarding) {
       _rewatch();
       startBackground();
+      unawaited(askSystemPermissions()); // speech, if it could never be asked before
     }
     _autoScanTimer ??=
         Timer.periodic(const Duration(seconds: 3), (_) => _autoScan());
@@ -177,7 +218,7 @@ class AppController extends ChangeNotifier {
   }
 
   void _autoScan() {
-    if (!ready || !store.initialDone || indexer.isRunning || roots.isEmpty) {
+    if (!ready || contentLoading != null || !store.initialDone || indexer.isRunning || roots.isEmpty) {
       return;
     }
     final readFiles = store.backgroundEnabled;
@@ -208,6 +249,12 @@ class AppController extends ChangeNotifier {
         if (store.backgroundEnabled) startBackground();
       }
     }());
+  }
+
+  /// Saves the index now – when the app is quitting.
+  Future<void> saveNow() async {
+    if (!ready) return;
+    await store.save().timeout(const Duration(seconds: 20), onTimeout: () {});
   }
 
   Future<void> refreshRoots() async {
@@ -250,12 +297,11 @@ class AppController extends ChangeNotifier {
       if (!(hasExtractableText(f.ext) || isOcrCandidate(f.ext) || isVideoCandidate(f.ext))) {
         f.status = IndexStatus.nameOnly;
       }
-      final cat = categoryOf(f.ext);
-      if (old == null && cat != null) {
+      if (old == null) {
         _recentAdds
           ..removeWhere((a) => a.path == path)
-          ..insert(0, RecentAdd(path, cat, now));
-        if (_recentAdds.length > 50) _recentAdds.removeLast();
+          ..insert(0, RecentAdd(path, categoryOf(f.ext), now));
+        if (_recentAdds.length > 200) _recentAdds.removeLast();
       }
       store.files[path] = f;
       engine.upsert(f, contentTf: const {});
@@ -317,13 +363,28 @@ class AppController extends ChangeNotifier {
   }
 
   final List<RecentAdd> _recentAdds = [];
-  static const _recentWindow = Duration(minutes: 2);
 
-  /// Files added in the last couple of minutes, newest first.
+  /// The sidebar marks categories holding new files for this long.
+  static const _recentWindow = Duration(minutes: 10);
+
+  /// The line under the search field names a new file for this long.
+  static const _announceWindow = Duration(minutes: 2);
+
+  /// Files added in the last few minutes, newest first.
   List<RecentAdd> get recentAdds {
     final now = DateTime.now();
     _recentAdds.removeWhere((a) => now.difference(a.at) > _recentWindow || !store.files.containsKey(a.path));
     return List.unmodifiable(_recentAdds);
+  }
+
+  /// New documents, images and videos from the last couple of minutes, for the line
+  /// under the search field.
+  List<RecentAdd> get freshAdds {
+    final now = DateTime.now();
+    return [
+      for (final a in recentAdds)
+        if (a.category != null && now.difference(a.at) <= _announceWindow) a,
+    ];
   }
 
   /// True once a recently added file's content is searchable (or it holds none).
@@ -387,8 +448,9 @@ class AppController extends ChangeNotifier {
   bool get hasWholeDrives => roots.any((r) => r.wholeDrive);
 
   /// A full analysis of the personal folders (or [only]): finds every file and reads
-  /// every document and image before returning, so Search opens with them searchable.
-  /// Videos (minutes each) and whole drives follow in the background.
+  /// every document and image up to [quickReadBytes] before returning, so Search opens
+  /// with them searchable. Larger files, videos (minutes each) and whole drives follow
+  /// in the background.
   /// Used on first launch, for re-analysis and new folders.
   Future<IndexSummary> analyse(
       {required void Function(IndexProgress) onProgress,
@@ -401,6 +463,7 @@ class AppController extends ChangeNotifier {
       skipPaths: Locations.skipPaths(),
       onProgress: onProgress,
       videos: false,
+      quick: true, // large files follow in the background, smallest first
     );
     // Drives next: the background scan starts as soon as Search is open.
     if (only == null && hasWholeDrives) _lastAutoScan = DateTime(2000);
@@ -459,11 +522,68 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// The "Allow access" screen was answered. If speech was just allowed, videos read
-  /// without it are read again so what is said in them becomes searchable.
+  /// macOS: brings up the system prompts for the personal folders, then for speech
+  /// recognition (what is said in videos), one after another – at the start, instead of
+  /// popping up in the middle of the analysis. Folders are asked once; speech whenever
+  /// macOS has never asked (a run started from an editor couldn't ask before).
+  Future<void> askSystemPermissions() async {
+    if (!hasSystemPrompts) return;
+    if (!store.permissionsAsked) {
+      for (final r in personalRoots.where((r) => !r.userAdded)) {
+        await requestFolderAccess([r.path]);
+      }
+    }
+    var speechGranted = false;
+    if (await speechAccess() == SpeechAccess.notAsked) speechGranted = await requestSpeechAccess();
+    permissionsAnswered(speechGranted: speechGranted);
+  }
+
+  /// Speech recognition is allowed, so what is said in videos is read too (macOS).
+  bool speechInVideos = false;
+
+  /// What this device can read, found out once at start.
+  bool ocrAvailable = true, ocrNative = true, videoMedia = true;
+
+  Future<void> _checkEngines() async {
+    ocrAvailable = await ocr.isAvailable();
+    ocrNative = ocr.readsPdf; // the OS's own engine: reads scanned PDFs and classifies photos
+    videoMedia = await video.readsMedia();
+    notifyListeners();
+  }
+
+  (DateTime, Map<FileKind, KindProgress>)? _kinds;
+
+  /// True while a run is reading file contents (not just walking folders).
+  bool get readingContents => backgroundProgress != null && indexer.isRunning;
+
+  /// Per file kind: files whose contents are read, and how many still wait.
+  Map<FileKind, KindProgress> kindProgress() {
+    final now = DateTime.now();
+    if (_kinds != null && now.difference(_kinds!.$1) < const Duration(milliseconds: 700)) return _kinds!.$2;
+    final out = {for (final k in FileKind.values) k: KindProgress()};
+    for (final f in store.files.values) {
+      if (f.status == IndexStatus.nameOnly) continue; // nothing inside to read
+      final k = out[f.kind]!;
+      k.total++;
+      if (f.isPending) k.left++;
+    }
+    final pr = backgroundProgress;
+    if (pr?.video != null) out[FileKind.video]!.partial = pr!.videoFraction;
+    _kinds = (now, out);
+    return out;
+  }
+
+  Future<void> _checkSpeech() async => speechInVideos = await speechAccess() == SpeechAccess.granted;
+
+  /// The system prompts were answered. The first time speech is allowed, videos read
+  /// without it are read again so what is said in them becomes searchable – once only:
+  /// macOS may ask again (a rebuilt development copy counts as a new app), and saying
+  /// yes again must not mean reading every video again.
   void permissionsAnswered({required bool speechGranted}) {
     store.permissionsAsked = true;
-    if (speechGranted) {
+    if (speechGranted) speechInVideos = true;
+    if (speechGranted && !store.speechVideos) {
+      store.speechVideos = true;
       for (final f in store.files.values) {
         if (isVideoCandidate(f.ext) && f.status != IndexStatus.pending) f.status = IndexStatus.pending;
       }

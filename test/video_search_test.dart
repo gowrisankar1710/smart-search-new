@@ -120,6 +120,23 @@ void main() {
     expect(summary.remaining, 0);
     expect(store.files.values.where((f) => f.isPending), isEmpty);
   });
+
+  test('progress names the video being read and how far it has got', () async {
+    final dir = await Directory.systemTemp.createTemp('video_progress');
+    addTearDown(() => dir.delete(recursive: true));
+    final a = File('${dir.path}/a.mp4')..writeAsBytesSync([0, 0, 0, 1]);
+    File('${dir.path}/b.mp4').writeAsBytesSync([0, 0, 0, 1, 2]);
+    final seen = <IndexProgress>[];
+    await Indexer(IndexStore(), SearchEngine(), _NoOcr(), video: _FakeVideo()).run(
+      roots: [ScanRoot(dir.path, 'test')],
+      skipPaths: const [],
+      onProgress: seen.add,
+    );
+    final halfway = seen.firstWhere((p) => p.video == a.path && p.videoFraction == 0.5);
+    expect(halfway.videoNumber, 1);
+    expect(halfway.videoCount, 2);
+    expect(seen.last.video, isNull); // finished: the card goes back to files
+  });
 }
 
 class _FakeVideo implements VideoAnalyzer {
@@ -130,8 +147,10 @@ class _FakeVideo implements VideoAnalyzer {
   @override
   void cancel() {}
   @override
-  Future<List<VideoSegment>> analyze(String path) async =>
-      [...await readSidecarSubtitles(path), const VideoSegment(75, 'the budget review')];
+  Future<List<VideoSegment>> analyze(String path, {void Function(double fraction)? onProgress}) async {
+    onProgress?.call(0.5);
+    return [...await readSidecarSubtitles(path), const VideoSegment(75, 'the budget review')];
+  }
 }
 
 class _NoOcr implements OcrEngine {

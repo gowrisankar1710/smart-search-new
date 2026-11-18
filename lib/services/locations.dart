@@ -51,8 +51,15 @@ class Locations {
       add(p.join(h, 'OneDrive'), 'OneDrive');
       // Everything else under the profile and on the drives: read after Search opens.
       add(h, 'Home', drive: true);
-      for (final l in 'DEFGHIJKLMNOPQRSTUVWXYZ'.split('')) {
-        add('$l:\\', 'Drive $l:', drive: true);
+      // Checked all at once, off the UI thread: an offline network drive or an empty card
+      // reader can take many seconds to answer, and would hold up app start.
+      final letters = 'DEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+      final present = await Future.wait([
+        for (final l in letters)
+          Directory('$l:\\').exists().timeout(const Duration(milliseconds: 800), onTimeout: () => false).catchError((_) => false),
+      ]);
+      for (var i = 0; i < letters.length; i++) {
+        if (present[i]) add('${letters[i]}:\\', 'Drive ${letters[i]}:', drive: true);
       }
       add(r'C:\', 'Drive C:', drive: true);
     } else if (Platform.isMacOS) {

@@ -8,9 +8,9 @@ import '../app_controller.dart';
 import '../services/locations.dart';
 import '../services/search_engine.dart';
 import 'detail_panel.dart';
+import 'capabilities_grid.dart';
 import 'category_status.dart';
 import 'format.dart';
-import 'permission_sheet.dart';
 import 'result_tile.dart';
 import 'settings_sheet.dart';
 import 'theme.dart';
@@ -44,7 +44,6 @@ class _HomeScreenState extends State<HomeScreen> {
     // Start the "time until search" clock once the screen is on display.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) c.enterSearchScreen();
-      if (mounted) maybeShowPermissionSheet(context, c); // once, for installs from before it existed
     });
   }
 
@@ -187,6 +186,8 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             _TimingStrip(controller: c),
+            // Idle, the "What you can search" cards show progress; while searching, one line.
+            if (hasQuery) ReadingProgressCard(controller: c),
             CategoryLine(controller: c),
             if (!showSidebar && hasQuery && _result.allKinds > 0) ...[
               const SizedBox(height: 12),
@@ -195,7 +196,7 @@ class _HomeScreenState extends State<HomeScreen> {
             if (hasQuery) _ResultSummary(result: _result, query: _query.text.trim(), searching: _searching),
             Expanded(
               child: !hasQuery
-                  ? const SizedBox.shrink()
+                  ? SingleChildScrollView(child: CapabilitiesGrid(controller: c))
                   : _result.hits.isEmpty
                       ? (_searching
                           ? const Center(child: SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2)))
@@ -244,6 +245,10 @@ class _Sidebar extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     final tt = Theme.of(context).textTheme;
     final c = controller;
+    // New files per category (green "N new" badge), from what the folder watcher saw.
+    final adds = c.recentAdds;
+    List<RecentAdd> newIn(ResultFilter f) =>
+        [for (final a in adds) if (f.kinds == null || f.kinds!.contains(a.kind)) a];
     return Container(
       decoration: BoxDecoration(
         color: cs.surfaceContainerLow,
@@ -267,6 +272,8 @@ class _Sidebar extends StatelessWidget {
                   icon: f.icon,
                   label: f.label,
                   count: countFor?.call(f),
+                  fresh: newIn(f),
+                  isRead: c.isRead,
                   selected: f == filter,
                   onTap: () => onFilter(f),
                 ),
@@ -325,6 +332,8 @@ class _SideItem extends StatelessWidget {
     required this.label,
     required this.onTap,
     this.count,
+    this.fresh = const [],
+    this.isRead,
     this.selected = false,
     this.muted = false,
     this.tooltip,
@@ -332,6 +341,10 @@ class _SideItem extends StatelessWidget {
   final IconData icon;
   final String label;
   final int? count;
+
+  /// Files of this category added in the last few minutes.
+  final List<RecentAdd> fresh;
+  final bool Function(String path)? isRead;
   final bool selected;
   final bool muted;
   final String? tooltip;
@@ -372,6 +385,10 @@ class _SideItem extends StatelessWidget {
                       color: dim ? fg.withValues(alpha: 0.45) : fg,
                     )),
               ),
+              if (fresh.isNotEmpty) ...[
+                _NewBadge(fresh: fresh, isRead: isRead),
+                const SizedBox(width: 6),
+              ],
               if (count != null && count! > 0)
                 Text(formatCount(count!),
                     style: tt.labelSmall?.copyWith(
@@ -384,6 +401,45 @@ class _SideItem extends StatelessWidget {
       ),
     );
     return tooltip == null ? item : Tooltip(message: tooltip!, child: item);
+  }
+}
+
+/// Green "3 new" pill on a sidebar category. While a new file is still being read it
+/// shows a small spinner; the tooltip names each file and whether it's searchable yet.
+class _NewBadge extends StatelessWidget {
+  const _NewBadge({required this.fresh, required this.isRead});
+  final List<RecentAdd> fresh;
+  final bool Function(String path)? isRead;
+
+  static const _green = Color(0xFF22B573);
+
+  @override
+  Widget build(BuildContext context) {
+    final reading = isRead != null && fresh.any((a) => !isRead!(a.path));
+    final shown = fresh.take(8).toList();
+    final more = fresh.length - shown.length;
+    return Tooltip(
+      message: [
+        for (final a in shown) '${a.name}${isRead == null ? '' : (isRead!(a.path) ? ' · searchable' : ' · reading…')}',
+        if (more > 0) '+$more more',
+      ].join('\n'),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(6, 2, 7, 2),
+        decoration: BoxDecoration(
+          color: _green.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(99),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          if (reading)
+            const SizedBox(width: 8, height: 8, child: CircularProgressIndicator(strokeWidth: 1.4, color: _green))
+          else
+            Container(width: 6, height: 6, decoration: const BoxDecoration(color: _green, shape: BoxShape.circle)),
+          const SizedBox(width: 4),
+          Text('${fresh.length} new',
+              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: _green, height: 1.2)),
+        ]),
+      ),
+    );
   }
 }
 
@@ -586,7 +642,6 @@ class _TimingStripState extends State<_TimingStrip> {
     final tt = Theme.of(context).textTheme;
     final c = widget.controller;
     final t = c.timing;
-    final bg = c.backgroundProgress;
     final style = tt.labelSmall?.copyWith(color: cs.onSurfaceVariant, fontFeatures: const [FontFeature.tabularFigures()]);
     final strong = TextStyle(color: cs.onSurface, fontWeight: FontWeight.w700);
 
@@ -605,11 +660,6 @@ class _TimingStripState extends State<_TimingStrip> {
           const TextSpan(text: 'Indexed in '),
           TextSpan(text: formatSeconds(t.indexTime!), style: strong),
         ], tooltip: t.indexAt == null ? null : 'Last indexing pass: ${formatDate(t.indexAt!)}'),
-      if (bg != null && c.showReading)
-        item(Icons.sync_rounded, [
-          const TextSpan(text: 'Background reading '),
-          TextSpan(text: formatSeconds(bg.elapsed), style: strong),
-        ]),
       if (c.waitingForSearch)
         item(Icons.hourglass_top_rounded, [
           const TextSpan(text: 'On Search '),

@@ -78,6 +78,18 @@ int maxExtractBytes(String ext) {
   return 50 << 20; // text files: only the first 1 MB is read anyway
 }
 
+/// Largest file the Timer screen's pass reads before Search opens; bigger ones are read
+/// in the background right after, smallest first. Reading cost grows with size (pixels
+/// to recognise, pages to render), so a handful of huge photos or scans would otherwise
+/// hold Search back for minutes – most of all with Windows OCR.
+int quickReadBytes(String ext, {bool ocr = false}) {
+  if (ext == 'pdf') return ocr ? 3 << 20 : 25 << 20; // scanned PDF: every page is OCR'd
+  if (ocr || ocrExtensions.contains(ext)) return 8 << 20;
+  if (_zipOfficeExt.contains(ext)) return 20 << 20;
+  if (_legacyBinaryExt.contains(ext)) return 10 << 20;
+  return 10 << 20;
+}
+
 /// What kind of content a file holds, as the app reads it: documents first, images
 /// next (text and objects inside them), videos last (in the background).
 enum FileCategory {

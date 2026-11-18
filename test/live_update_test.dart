@@ -103,7 +103,7 @@ class _SlowVideo implements VideoAnalyzer {
   @override
   void cancel() {}
   @override
-  Future<List<VideoSegment>> analyze(String path) async {
+  Future<List<VideoSegment>> analyze(String path, {void Function(double fraction)? onProgress}) async {
     if (!started.isCompleted) started.complete();
     await finish.future;
     return const [VideoSegment(1, 'intro')];

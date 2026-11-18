@@ -49,9 +49,9 @@ void main() {
     expect(paths('wedding dress'), {gown.path});
   });
 
-  test('text matches come first; surer pictures rank higher', () {
+  test('images come first (surer pictures higher), then other files', () {
     final hits = engine.find('bird').hits.map((h) => h.file.path).toList();
-    expect(hits, [notes.path, birds.path, faint.path]);
+    expect(hits, [birds.path, faint.path, notes.path]);
   });
 
   test('labels are saved with the index', () {

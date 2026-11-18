@@ -427,6 +427,8 @@ std::vector<std::string> SplitLines(const std::string& text) {
   return lines;
 }
 
+void SendVideoProgress(const std::string& path, double fraction);
+
 // Text shown on screen, each new line timed to the frame where it first appears.
 EncodableList AnalyzeVideo(const std::string& path, double budget_seconds) {
   using winrt::Windows::Foundation::TimeSpan;
@@ -457,8 +459,14 @@ EncodableList AnalyzeVideo(const std::string& path, double budget_seconds) {
 
   const double step = (std::max)(kMinStep, duration / kMaxFrames);
   std::set<std::string> previous;
+  double reported = 0;
+  SendVideoProgress(path, 0);
   for (double t = (std::min)(0.5, duration / 2); t < duration; t += step) {
     if (g_video_cancelled || std::chrono::steady_clock::now() > deadline) break;
+    if (t / duration - reported >= 0.01) {  // at most every 1 %
+      reported = t / duration;
+      SendVideoProgress(path, reported);
+    }
     try {
       const auto at = std::chrono::duration_cast<TimeSpan>(std::chrono::duration<double>(t));
       auto frame = composition
@@ -567,6 +575,18 @@ void HandleVideo(const flutter::MethodCall<EncodableValue>& call, std::unique_pt
     } catch (...) {
     }
     Reply([r, segments]() { r->Success(EncodableValue(segments)); });
+  });
+}
+
+// How far the video being read has got, 0–1: the Search screen shows it as a percentage.
+void SendVideoProgress(const std::string& path, double fraction) {
+  Reply([path, fraction]() {
+    if (!g_video_channel) return;
+    g_video_channel->InvokeMethod(
+        "progress", std::make_unique<EncodableValue>(EncodableMap{
+                        {EncodableValue("path"), EncodableValue(path)},
+                        {EncodableValue("fraction"), EncodableValue(fraction)},
+                    }));
   });
 }
 

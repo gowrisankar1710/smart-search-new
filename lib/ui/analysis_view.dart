@@ -179,7 +179,7 @@ class _RunningBody extends StatelessWidget {
           const SizedBox(width: 6),
           Flexible(
             child: Text(
-              footnote ?? 'Search opens by itself once your documents and images are read. Videos are read in the background.',
+              footnote ?? 'Search opens by itself once your documents and images are read. Large files and videos are read in the background.',
               textAlign: TextAlign.center,
               style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant),
             ),
@@ -514,6 +514,13 @@ class _DoneBodyState extends State<_DoneBody> {
         Text('Ready to search', style: tt.headlineSmall?.copyWith(fontWeight: FontWeight.w800, letterSpacing: -0.4)),
         const SizedBox(height: 6),
         Text('Documents and images read in $secs seconds', style: tt.bodyMedium?.copyWith(color: cs.onSurfaceVariant)),
+        if (summary.deferred > 0) ...[
+          const SizedBox(height: 4),
+          Text(
+            '${formatCount(summary.deferred)} large ${summary.deferred == 1 ? 'file is' : 'files are'} read next, in the background',
+            style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant),
+          ),
+        ],
         const SizedBox(height: 24),
         const _Steps(active: 3),
         const SizedBox(height: 22),

@@ -14,8 +14,11 @@ class IndexStore {
   bool initialDone = false;
   bool backgroundEnabled = true;
 
-  /// The "Allow access" screen was shown (macOS), so it isn't shown again.
+  /// The macOS system prompts were brought up once, so they are not asked again.
   bool permissionsAsked = false;
+
+  /// Videos were read again once speech was allowed – never needed a second time.
+  bool speechVideos = false;
   int ocrVersion = 0;
   int contentVersion = 0;
   DateTime? lastRun;
@@ -42,6 +45,7 @@ class IndexStore {
       initialDone = data['initialDone'] as bool? ?? false;
       backgroundEnabled = data['bg'] as bool? ?? true;
       permissionsAsked = data['pa'] as bool? ?? false;
+      speechVideos = data['sv'] as bool? ?? false;
       ocrVersion = data['ocr'] as int? ?? 0;
       contentVersion = data['cv'] as int? ?? 0;
       final last = data['last'] as int?;
@@ -78,6 +82,7 @@ class IndexStore {
       'initialDone': initialDone,
       'bg': backgroundEnabled,
       'pa': permissionsAsked,
+      'sv': speechVideos,
       'ocr': ocrVersion,
       'cv': contentVersion,
       'last': lastRun?.millisecondsSinceEpoch,

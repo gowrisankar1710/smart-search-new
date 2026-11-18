@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
@@ -122,27 +123,54 @@ class SearchEngine {
     _tokCacheVocabLen = 0;
   }
 
-  /// Rebuilds from the stored index; tokenising of document text happens off the UI thread.
-  Future<void> rebuild(Iterable<IndexedFile> files) async {
+  /// Rebuilds from the stored index in two steps, so the app opens without waiting
+  /// for the slow one:
+  ///  1. names, folders and image labels – quick; [onNamesReady] fires once they're in.
+  ///  2. the text inside files, tokenised off the UI thread in parallel lanes, recently
+  ///     changed files first. Searches find a file's text once its batch is in;
+  ///     [onContent] reports (done, total) as batches land.
+  Future<void> rebuild(
+    Iterable<IndexedFile> files, {
+    void Function()? onNamesReady,
+    void Function(int done, int total)? onContent,
+  }) async {
     clear();
     final withText = <IndexedFile>[];
     var n = 0;
     for (final f in files) {
-      if (f.content.isNotEmpty) {
-        withText.add(f);
-      } else {
-        upsert(f, contentTf: const {});
-        if (++n % 5000 == 0) await Future<void>.delayed(Duration.zero);
+      upsert(f, contentTf: const {});
+      if (f.content.isNotEmpty) withText.add(f);
+      if (++n % 5000 == 0) await Future<void>.delayed(Duration.zero);
+    }
+    onNamesReady?.call();
+    if (withText.isEmpty) return;
+
+    withText.sort((a, b) => b.modifiedMs.compareTo(a.modifiedMs));
+    final mobile = Platform.isAndroid || Platform.isIOS;
+    final lanes = (Platform.numberOfProcessors - 1).clamp(1, mobile ? 2 : 6);
+    const chunk = 400;
+    var next = 0;
+    var done = 0;
+    onContent?.call(0, withText.length);
+    Future<void> lane() async {
+      while (next < withText.length) {
+        final part = withText.sublist(next, min(next + chunk, withText.length));
+        next += part.length;
+        final contents = [for (final f in part) f.content];
+        final tfs = await compute(_tfBatch, contents);
+        for (var j = 0; j < part.length; j++) {
+          final f = part[j];
+          // Skip files read again or removed meanwhile – their newer entry stands.
+          final id = _ids[f.path];
+          if (id == null || !identical(_docs[id], f) || !identical(f.content, contents[j])) continue;
+          upsert(f, contentTf: tfs[j]);
+        }
+        done += part.length;
+        onContent?.call(done, withText.length);
       }
     }
-    const chunk = 300;
-    for (var i = 0; i < withText.length; i += chunk) {
-      final part = withText.sublist(i, min(i + chunk, withText.length));
-      final tfs = await compute(_tfBatch, [for (final f in part) f.content]);
-      for (var j = 0; j < part.length; j++) {
-        upsert(part[j], contentTf: tfs[j]);
-      }
-    }
+
+    await Future.wait([for (var i = 0; i < lanes; i++) lane()]);
   }
 
   void _removeKeys(int id) {
@@ -444,12 +472,23 @@ class _Run {
         final objs = _matchedLabels(f);
         if (objs.isEmpty) continue;
         final age = max(0, now - f.modifiedMs) / 86400000;
-        // Below exact text matches (≥ 8): a photo that shows a bird ranks after a file that says "bird".
+        // Among images, below exact text matches (≥ 8): a photo that shows a bird ranks after
+        // a picture whose text says "bird". (Images list before other files – see kindGroup.)
         found.add(_Found(f, (1 + _objScore(objs) * 0.75) * (1 + 0.15 * exp(-age / 180)), false, false, objects: objs));
       }
     }
     return true;
   }
+
+  /// Order of result groups: images, video & audio, documents (PDF, Word, sheets,
+  /// slides), text & code, everything else.
+  static int kindGroup(FileKind k) => switch (k) {
+        FileKind.image => 0,
+        FileKind.video || FileKind.audio => 1,
+        FileKind.pdf || FileKind.document || FileKind.spreadsheet || FileKind.presentation => 2,
+        FileKind.text => 3,
+        _ => 4,
+      };
 
   /// Surer labels rank higher: 0–8 points.
   static double _objScore(List<ImageLabel> objs) =>
@@ -461,7 +500,11 @@ class _Run {
       kindCounts[h.f.kind] = (kindCounts[h.f.kind] ?? 0) + 1;
     }
     final shown = kinds == null ? List.of(found) : found.where((h) => kinds!.contains(h.f.kind)).toList();
-    shown.sort((a, b) => b.score.compareTo(a.score));
+    // Images first, then videos, then documents, then the rest; best matches first in each group.
+    shown.sort((a, b) {
+      final g = kindGroup(a.f.kind).compareTo(kindGroup(b.f.kind));
+      return g != 0 ? g : b.score.compareTo(a.score);
+    });
     final highlights = [query, ...toks];
     final hits = [
       for (final h in shown.take(limit))
