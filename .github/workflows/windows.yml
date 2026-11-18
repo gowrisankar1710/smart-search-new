@@ -5,11 +5,15 @@ on:
   push:
     branches: [main]
 
+# Publishing a release needs write access to the repository's contents.
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: subosito/flutter-action@v2
         with:
@@ -33,8 +37,23 @@ jobs:
             exit 1
           }
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: smart_file_search-windows
           path: build/windows/x64/runner/Release/
           if-no-files-found: error
+
+      # Also a GitHub Release: a public link that downloads without signing in.
+      # The newest is always at …/releases/latest/download/smart_file_search-windows.zip
+      - name: Publish release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath smart_file_search-windows.zip
+          $sha = "${{ github.sha }}".Substring(0, 7)
+          gh release create "windows-${{ github.run_number }}" smart_file_search-windows.zip `
+            --target "${{ github.sha }}" `
+            --title "Windows build ${{ github.run_number }} ($sha)" `
+            --notes "Unzip and run smart_file_search.exe – keep the whole folder together. Built from commit $sha." `
+            --latest
