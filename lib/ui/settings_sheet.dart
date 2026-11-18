@@ -1,7 +1,10 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
 import '../app_controller.dart';
 import '../services/locations.dart';
+import '../services/ocr_service.dart';
 import 'analysis_view.dart';
 import 'format.dart';
 
@@ -92,6 +95,25 @@ class _SettingsBody extends StatelessWidget {
               : c.ocr.name),
         ),
       ),
+      if (c.ocr case final NativeOcrEngine native when Platform.isWindows)
+        FutureBuilder(
+          future: native.windowsInfo(),
+          builder: (_, snap) {
+            final info = snap.data;
+            if (info == null) return const SizedBox.shrink();
+            final none = info.ocrLanguage.isEmpty;
+            return ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(none ? Icons.warning_amber_rounded : Icons.translate_rounded,
+                  color: none ? Colors.orange.shade700 : null),
+              title: Text(none ? 'No text-reading language installed' : 'Reads text in ${info.ocrLanguage}'),
+              subtitle: Text(none
+                  ? 'Text in pictures and videos can\'t be read. Add one in Windows Settings › Time & language › '
+                      'Language & region › English (United States) › Language options › Optical character recognition.'
+                  : 'Objects in photos: ${info.objects ? 'on' : 'off (model missing)'}'),
+            );
+          },
+        ),
       const Divider(height: 32),
       Text('Search locations', style: tt.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
       const SizedBox(height: 4),

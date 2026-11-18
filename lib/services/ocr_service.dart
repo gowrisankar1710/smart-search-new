@@ -33,7 +33,8 @@ abstract class OcrEngine {
 /// v3: images are also classified (objects, scenes, clothing).
 /// v4: close-ups of people/objects are classified too, and a calibrated 0.3 cut-off.
 /// Windows v5: built-in Windows OCR and the bundled object classifier.
-final int kOcrVersion = Platform.isWindows ? 5 : 4;
+/// Windows v6: OCR falls back to any installed language; small pictures are enlarged.
+final int kOcrVersion = Platform.isWindows ? 6 : 4;
 
 OcrEngine createOcrEngine() {
   if (Platform.isAndroid || Platform.isIOS) return MlKitOcrEngine();
@@ -63,6 +64,18 @@ class NativeOcrEngine implements OcrEngine {
       : (Platform.numberOfProcessors ~/ 2).clamp(3, 4);
   @override
   bool get readsPdf => _native ?? false;
+
+  /// Windows: the OCR language in use ("" = none installed) and whether objects are
+  /// recognised. Null elsewhere.
+  Future<({String ocrLanguage, bool objects})?> windowsInfo() async {
+    if (!Platform.isWindows) return null;
+    try {
+      final m = await _channel.invokeMapMethod<String, Object?>('info') ?? const {};
+      return (ocrLanguage: (m['ocrLanguage'] as String?) ?? '', objects: (m['objects'] as bool?) ?? false);
+    } catch (_) {
+      return null;
+    }
+  }
 
   @override
   Future<bool> isAvailable() async {

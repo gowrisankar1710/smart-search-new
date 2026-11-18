@@ -8,6 +8,7 @@
 #include <winrt/Windows.Data.Pdf.h>
 #include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.Globalization.h>
 #include <winrt/Windows.Graphics.Imaging.h>
 #include <winrt/Windows.Media.Editing.h>
 #include <winrt/Windows.Media.MediaProperties.h>
@@ -151,18 +152,26 @@ double DoubleArg(const flutter::MethodCall<EncodableValue>& call, const char* ke
 // ------------------------------------------------------------------ images
 
 // Decodes |stream|, upright (EXIF orientation applied), long side at most |max_side|.
-wgi::SoftwareBitmap Decode(const wss::IRandomAccessStream& stream, uint32_t max_side) {
+// With |min_side|, smaller pictures are enlarged (up to 2.5x) towards it: Windows OCR
+// misses text only a few pixels tall – screenshots, scaled-down photos, video frames –
+// which it reads reliably once enlarged.
+wgi::SoftwareBitmap Decode(const wss::IRandomAccessStream& stream, uint32_t max_side, uint32_t min_side = 0) {
   auto decoder = wgi::BitmapDecoder::CreateAsync(stream).get();
   wgi::BitmapTransform transform;
   // Scaling happens before rotation, so it uses the stored (unrotated) size.
   const uint32_t w = decoder.PixelWidth();
   const uint32_t h = decoder.PixelHeight();
   const uint32_t long_side = (std::max)(w, h);
+  double s = 1.0;
   if (max_side > 0 && long_side > max_side) {
-    const double s = static_cast<double>(max_side) / static_cast<double>(long_side);
+    s = static_cast<double>(max_side) / static_cast<double>(long_side);
+  } else if (min_side > 0 && long_side > 0 && long_side < min_side) {
+    s = (std::min)(2.5, static_cast<double>(min_side) / static_cast<double>(long_side));
+  }
+  if (s != 1.0) {
     transform.ScaledWidth((std::max)(1u, static_cast<uint32_t>(std::lround(w * s))));
     transform.ScaledHeight((std::max)(1u, static_cast<uint32_t>(std::lround(h * s))));
-    transform.InterpolationMode(wgi::BitmapInterpolationMode::Fant);
+    transform.InterpolationMode(s < 1 ? wgi::BitmapInterpolationMode::Fant : wgi::BitmapInterpolationMode::Cubic);
   }
   return decoder
       .GetSoftwareBitmapAsync(wgi::BitmapPixelFormat::Bgra8, wgi::BitmapAlphaMode::Premultiplied,
@@ -178,19 +187,44 @@ wss::IRandomAccessStream OpenFile(const std::string& path) {
 
 // ------------------------------------------------------------------ OCR
 
-winrt::Windows::Media::Ocr::OcrEngine OcrEngineForThread() {
-  thread_local winrt::Windows::Media::Ocr::OcrEngine engine{nullptr};
+using winrt::Windows::Media::Ocr::OcrEngine;
+
+// The user's display languages first. If none of them has Windows OCR installed (an
+// Indian or other regional profile often hasn't), any installed OCR language –
+// English preferred – instead of no text reading at all.
+OcrEngine CreateOcrEngine() {
+  try {
+    if (auto e = OcrEngine::TryCreateFromUserProfileLanguages()) return e;
+  } catch (...) {
+  }
+  try {
+    const auto langs = OcrEngine::AvailableRecognizerLanguages();
+    for (const auto& l : langs) {
+      const std::wstring tag = l.LanguageTag().c_str();
+      if (tag.rfind(L"en", 0) == 0) {
+        if (auto e = OcrEngine::TryCreateFromLanguage(l)) return e;
+      }
+    }
+    for (const auto& l : langs) {
+      if (auto e = OcrEngine::TryCreateFromLanguage(l)) return e;
+    }
+  } catch (...) {
+  }
+  return nullptr;
+}
+
+OcrEngine OcrEngineForThread() {
+  thread_local OcrEngine engine{nullptr};
   thread_local bool tried = false;
   if (!tried) {
     tried = true;
-    try {
-      engine = winrt::Windows::Media::Ocr::OcrEngine::TryCreateFromUserProfileLanguages();
-    } catch (...) {
-      engine = nullptr;
-    }
+    engine = CreateOcrEngine();
   }
   return engine;
 }
+
+// Pictures smaller than this are enlarged before OCR (see Decode).
+constexpr uint32_t kOcrMinSide = 1800;
 
 // Camera photos are 4000+ px; text stays readable at 2600 and OCR takes about half as long.
 uint32_t OcrMaxSide() {
@@ -403,7 +437,7 @@ EncodableValue AnalyzeImage(const std::string& path) {
   }
   auto stream = OpenFile(path);
   try {
-    out[EncodableValue("text")] = EncodableValue(Ocr(Decode(stream, OcrMaxSide())));
+    out[EncodableValue("text")] = EncodableValue(Ocr(Decode(stream, OcrMaxSide(), kOcrMinSide)));
   } catch (...) {
   }
   try {
@@ -475,9 +509,12 @@ EncodableList AnalyzeVideo(const std::string& path, double budget_seconds) {
       const auto at = std::chrono::duration_cast<TimeSpan>(std::chrono::duration<double>(t));
       auto frame = composition
                        .GetThumbnailAsync(at, width, height,
-                                          winrt::Windows::Media::Editing::VideoFramePrecision::NearestFrame)
+                                          // Keyframes decode directly – an exact frame
+                                          // means decoding from the previous keyframe,
+                                          // seconds per frame.
+                                          winrt::Windows::Media::Editing::VideoFramePrecision::NearestKeyFrame)
                        .get();
-      const auto lines = SplitLines(Ocr(Decode(frame, OcrMaxSide())));
+      const auto lines = SplitLines(Ocr(Decode(frame, OcrMaxSide(), kOcrMinSide)));
       std::string fresh;
       for (const auto& l : lines) {
         if (previous.count(l)) continue;
@@ -512,6 +549,27 @@ void HandleOcr(const flutter::MethodCall<EncodableValue>& call, std::unique_ptr<
     });
     return;
   }
+  if (method == "info") {
+    // Which OCR language is in use ("" = none installed) and whether objects are recognised.
+    auto r = Share(std::move(result));
+    RunInBackground([r]() {
+      std::string lang;
+      bool objects = false;
+      try {
+        if (auto e = OcrEngineForThread()) lang = winrt::to_string(e.RecognizerLanguage().LanguageTag());
+      } catch (...) {
+      }
+      try {
+        objects = Classifier::Instance().Available();
+      } catch (...) {
+      }
+      Reply([r, lang, objects]() {
+        r->Success(EncodableValue(EncodableMap{{EncodableValue("ocrLanguage"), EncodableValue(lang)},
+                                               {EncodableValue("objects"), EncodableValue(objects)}}));
+      });
+    });
+    return;
+  }
   if (method != "recognize" && method != "analyzeImage") {
     result->NotImplemented();
     return;
@@ -529,7 +587,7 @@ void HandleOcr(const flutter::MethodCall<EncodableValue>& call, std::unique_ptr<
       if (full) {
         value = AnalyzeImage(p);
       } else {
-        value = EncodableValue(EndsWithPdf(p) ? OcrPdf(p) : Ocr(Decode(OpenFile(p), OcrMaxSide())));
+        value = EncodableValue(EndsWithPdf(p) ? OcrPdf(p) : Ocr(Decode(OpenFile(p), OcrMaxSide(), kOcrMinSide)));
       }
     } catch (...) {
     }
