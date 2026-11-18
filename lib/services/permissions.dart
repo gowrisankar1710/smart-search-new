@@ -29,8 +29,10 @@ enum SpeechAccess { granted, denied, notAsked, unavailable }
 
 const _video = MethodChannel('smart_file_search/video');
 
+/// macOS: the Speech permission. Windows: "granted" when its speech engine (SAPI) is
+/// installed – there is no prompt. Elsewhere: unavailable.
 Future<SpeechAccess> speechAccess() async {
-  if (!Platform.isMacOS) return SpeechAccess.unavailable;
+  if (!Platform.isMacOS && !Platform.isWindows) return SpeechAccess.unavailable;
   try {
     final s = await _video.invokeMethod<String>('speechStatus');
     return SpeechAccess.values.firstWhere((v) => v.name == s, orElse: () => SpeechAccess.unavailable);

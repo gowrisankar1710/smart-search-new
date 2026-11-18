@@ -1,5 +1,7 @@
 #include "native_analysis.h"
 
+#include <sapi.h>
+
 #include <flutter/encodable_value.h>
 #include <flutter/method_channel.h>
 #include <flutter/standard_method_codec.h>
@@ -13,6 +15,7 @@
 #include <winrt/Windows.Media.Editing.h>
 #include <winrt/Windows.Media.MediaProperties.h>
 #include <winrt/Windows.Media.Ocr.h>
+#include <winrt/Windows.Media.Transcoding.h>
 #include <winrt/Windows.Storage.Streams.h>
 #include <winrt/Windows.Storage.h>
 
@@ -467,6 +470,153 @@ std::vector<std::string> SplitLines(const std::string& text) {
 
 void SendVideoProgress(const std::string& path, double fraction);
 
+// ------------------------------------------------------------------ speech (SAPI)
+//
+// Windows has no modern speech-to-text for files, but its desktop speech engine
+// ("Microsoft Speech Recognizer", SAPI 5) can transcribe a WAV file offline. The audio
+// is taken out of the video with Windows' own transcoder, then read word by word.
+
+constexpr uint32_t kSpeechRate = 16000;  // 16 kHz, mono, 16-bit: what the engine works in
+
+// The default speech recognizer installed on this PC, or null.
+winrt::com_ptr<ISpObjectToken> DefaultRecognizerToken() {
+  winrt::com_ptr<ISpObjectTokenCategory> category;
+  if (FAILED(CoCreateInstance(__uuidof(SpObjectTokenCategory), nullptr, CLSCTX_ALL, IID_PPV_ARGS(category.put()))) ||
+      FAILED(category->SetId(SPCAT_RECOGNIZERS, FALSE))) {
+    return nullptr;
+  }
+  wchar_t* id = nullptr;
+  if (FAILED(category->GetDefaultTokenId(&id)) || !id) return nullptr;
+  winrt::com_ptr<ISpObjectToken> token;
+  const bool ok = SUCCEEDED(CoCreateInstance(__uuidof(SpObjectToken), nullptr, CLSCTX_ALL, IID_PPV_ARGS(token.put()))) &&
+                  SUCCEEDED(token->SetId(nullptr, id, FALSE));
+  CoTaskMemFree(id);
+  return ok ? token : nullptr;
+}
+
+// Can this PC transcribe speech at all? (Checked once.)
+bool SpeechAvailable() {
+  static const bool available = []() {
+    try {
+      return DefaultRecognizerToken() != nullptr;
+    } catch (...) {
+      return false;
+    }
+  }();
+  return available;
+}
+
+std::wstring TempWavPath() {
+  wchar_t dir[MAX_PATH];
+  const DWORD n = GetTempPathW(MAX_PATH, dir);
+  static std::atomic<int> counter{0};
+  return std::wstring(dir, n) + L"sfs-speech-" + std::to_wstring(GetCurrentProcessId()) + L"-" +
+         std::to_wstring(counter++) + L".wav";
+}
+
+// The video's sound as a 16 kHz mono WAV file; false if it has none or can't be read.
+bool ExtractAudio(const std::string& video, const std::wstring& wav) {
+  namespace mp = winrt::Windows::Media::MediaProperties;
+  auto src = wst::StorageFile::GetFileFromPathAsync(winrt::to_hstring(video)).get();
+  const auto slash = wav.find_last_of(L"\\/");
+  auto folder = wst::StorageFolder::GetFolderFromPathAsync(wav.substr(0, slash)).get();
+  auto dst = folder.CreateFileAsync(wav.substr(slash + 1), wst::CreationCollisionOption::ReplaceExisting).get();
+  auto profile = mp::MediaEncodingProfile::CreateWav(mp::AudioEncodingQuality::Low);
+  profile.Audio(mp::AudioEncodingProperties::CreatePcm(kSpeechRate, 1, 16));
+  profile.Video(nullptr);
+  winrt::Windows::Media::Transcoding::MediaTranscoder transcoder;
+  auto prepared = transcoder.PrepareFileTranscodeAsync(src, dst, profile).get();
+  if (!prepared.CanTranscode()) return false;
+  prepared.TranscodeAsync().get();
+  return true;
+}
+
+void ReleaseEvent(SPEVENT& e) {
+  if (e.elParamType == SPET_LPARAM_IS_OBJECT || e.elParamType == SPET_LPARAM_IS_TOKEN) {
+    if (e.lParam) reinterpret_cast<IUnknown*>(e.lParam)->Release();
+  } else if (e.elParamType == SPET_LPARAM_IS_POINTER || e.elParamType == SPET_LPARAM_IS_STRING) {
+    if (e.lParam) CoTaskMemFree(reinterpret_cast<void*>(e.lParam));
+  }
+  e.lParam = 0;
+}
+
+// Every recognised word with its own start time, like macOS: [{"t": s, "text": word}].
+// |progress| gets 0–1 as the audio is worked through.
+EncodableList Transcribe(const std::wstring& wav, double duration, const std::function<bool()>& stop,
+                         const std::function<void(double)>& progress) {
+  EncodableList out;
+  auto token = DefaultRecognizerToken();
+  if (!token) return out;
+  winrt::com_ptr<ISpRecognizer> recognizer;
+  winrt::check_hresult(
+      CoCreateInstance(__uuidof(SpInprocRecognizer), nullptr, CLSCTX_ALL, IID_PPV_ARGS(recognizer.put())));
+  winrt::check_hresult(recognizer->SetRecognizer(token.get()));
+  winrt::com_ptr<ISpStream> stream;
+  winrt::check_hresult(CoCreateInstance(__uuidof(SpStream), nullptr, CLSCTX_ALL, IID_PPV_ARGS(stream.put())));
+  // No format given: it is read from the WAV header.
+  winrt::check_hresult(stream->BindToFile(wav.c_str(), SPFM_OPEN_READONLY, nullptr, nullptr, 0));
+  winrt::check_hresult(recognizer->SetInput(stream.get(), FALSE));
+
+  winrt::com_ptr<ISpRecoContext> context;
+  winrt::check_hresult(recognizer->CreateRecoContext(context.put()));
+  const ULONGLONG interest = SPFEI(SPEI_RECOGNITION) | SPFEI(SPEI_END_SR_STREAM);
+  winrt::check_hresult(context->SetInterest(interest, interest));
+  winrt::check_hresult(context->SetNotifyWin32Event());
+  const HANDLE ready = context->GetNotifyEventHandle();
+
+  winrt::com_ptr<ISpRecoGrammar> grammar;
+  winrt::check_hresult(context->CreateGrammar(1, grammar.put()));
+  winrt::check_hresult(grammar->LoadDictation(nullptr, SPLO_STATIC));
+  winrt::check_hresult(grammar->SetDictationState(SPRS_ACTIVE));
+  recognizer->SetRecoState(SPRST_ACTIVE);
+
+  const double bytes_per_second = kSpeechRate * 2.0;
+  bool finished = false;
+  while (!finished) {
+    if (stop()) break;
+    WaitForSingleObject(ready, 500);
+    SPEVENT e{};
+    ULONG fetched = 0;
+    while (SUCCEEDED(context->GetEvents(1, &e, &fetched)) && fetched == 1) {
+      if (e.eEventId == SPEI_END_SR_STREAM) finished = true;
+      if (e.eEventId == SPEI_RECOGNITION && e.elParamType == SPET_LPARAM_IS_OBJECT && e.lParam) {
+        auto* result = reinterpret_cast<ISpRecoResult*>(e.lParam);
+        SPPHRASE* phrase = nullptr;
+        if (SUCCEEDED(result->GetPhrase(&phrase)) && phrase) {
+          const double start = static_cast<double>(phrase->ullAudioStreamPosition) / bytes_per_second;
+          for (ULONG i = 0; i < phrase->Rule.ulCountOfElements; i++) {
+            const auto& el = phrase->pElements[i];
+            if (!el.pszDisplayText || !*el.pszDisplayText) continue;
+            const double t = start + static_cast<double>(el.ulAudioTimeOffset) / 1e7;
+            out.push_back(EncodableMap{{EncodableValue("t"), EncodableValue(t)},
+                                       {EncodableValue("text"), EncodableValue(winrt::to_string(el.pszDisplayText))}});
+          }
+          if (duration > 0) progress((std::min)(1.0, start / duration));
+          CoTaskMemFree(phrase);
+        }
+      }
+      ReleaseEvent(e);
+      fetched = 0;
+    }
+  }
+  recognizer->SetRecoState(SPRST_INACTIVE);
+  return out;
+}
+
+// What is said in the video, or nothing if speech can't be read here.
+EncodableList VideoSpeech(const std::string& path, double duration, const std::function<bool()>& stop,
+                          const std::function<void(double)>& progress) {
+  if (!SpeechAvailable()) return {};
+  const std::wstring wav = TempWavPath();
+  EncodableList words;
+  try {
+    if (ExtractAudio(path, wav)) words = Transcribe(wav, duration, stop, progress);
+  } catch (...) {
+  }
+  DeleteFileW(wav.c_str());
+  return words;
+}
+
 // Text shown on screen, each new line timed to the frame where it first appears.
 EncodableList AnalyzeVideo(const std::string& path, double budget_seconds) {
   using winrt::Windows::Foundation::TimeSpan;
@@ -497,14 +647,21 @@ EncodableList AnalyzeVideo(const std::string& path, double budget_seconds) {
 
   const double step = (std::max)(kMinStep, duration / kMaxFrames);
   std::set<std::string> previous;
-  double reported = 0;
-  SendVideoProgress(path, 0);
-  for (double t = (std::min)(0.5, duration / 2); t < duration; t += step) {
-    if (g_video_cancelled || std::chrono::steady_clock::now() > deadline) break;
-    if (t / duration - reported >= 0.01) {  // at most every 1 %
-      reported = t / duration;
-      SendVideoProgress(path, reported);
+  // With speech, frames are the first 40 % of the progress and speech the rest.
+  const bool speaks = SpeechAvailable();
+  const double frame_share = speaks ? 0.4 : 1.0;
+  double reported = -1;
+  const auto report = [&](double f) {
+    if (f - reported >= 0.01 || f >= 1) {  // at most every 1 %
+      reported = f;
+      SendVideoProgress(path, f);
     }
+  };
+  const auto stop = [&]() { return g_video_cancelled.load() || std::chrono::steady_clock::now() > deadline; };
+  report(0);
+  for (double t = (std::min)(0.5, duration / 2); t < duration; t += step) {
+    if (stop()) break;
+    report(t / duration * frame_share);
     try {
       const auto at = std::chrono::duration_cast<TimeSpan>(std::chrono::duration<double>(t));
       auto frame = composition
@@ -529,6 +686,12 @@ EncodableList AnalyzeVideo(const std::string& path, double budget_seconds) {
     } catch (...) {
       // An unreadable frame – try the next one.
     }
+  }
+  if (speaks && !stop()) {
+    // Spoken words first, then on-screen text – each run in time order, as on macOS.
+    EncodableList words = VideoSpeech(path, duration, stop, [&](double f) { report(frame_share + f * (1 - frame_share)); });
+    words.insert(words.end(), out.begin(), out.end());
+    return words;
   }
   return out;
 }
@@ -615,6 +778,15 @@ void HandleVideo(const flutter::MethodCall<EncodableValue>& call, std::unique_pt
   if (method == "cancel") {
     g_video_cancelled = true;
     result->Success();
+    return;
+  }
+  if (method == "speechStatus") {
+    // No permission prompt on Windows: speech is read whenever an engine is installed.
+    auto r = Share(std::move(result));
+    RunInBackground([r]() {
+      const bool ok = SpeechAvailable();
+      Reply([r, ok]() { r->Success(EncodableValue(std::string(ok ? "granted" : "unavailable"))); });
+    });
     return;
   }
   if (method != "analyze") {

@@ -45,8 +45,8 @@ class SubtitleVideoAnalyzer implements VideoAnalyzer {
 
 /// macOS: AVFoundation samples frames → Apple Vision reads on-screen text, and the
 /// on-device Speech recogniser transcribes the audio.
-/// Windows: Windows.Media.Editing samples frames → Windows OCR reads on-screen text
-/// (Windows has no built-in speech-to-text for files).
+/// Windows: Windows.Media.Editing samples frames → Windows OCR reads on-screen text,
+/// and the Windows speech engine (SAPI) transcribes the audio when installed.
 /// Plus any subtitle files.
 class NativeVideoAnalyzer implements VideoAnalyzer {
   static const _channel = MethodChannel('smart_file_search/video');
@@ -69,7 +69,8 @@ class NativeVideoAnalyzer implements VideoAnalyzer {
   static Set<String> get _unsupported => Platform.isMacOS ? const {'mkv', 'webm', 'avi', 'wmv'} : const {};
 
   @override
-  String get name => Platform.isWindows ? 'Windows OCR on video frames' : 'Apple Vision + Speech (on-device)';
+  String get name =>
+      Platform.isWindows ? 'Windows OCR + Windows speech (on-device)' : 'Apple Vision + Speech (on-device)';
 
   @override
   Future<bool> readsMedia() async {

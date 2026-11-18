@@ -37,6 +37,8 @@ target_link_libraries(${BINARY_NAME} PRIVATE flutter flutter_wrapper_app)
 target_link_libraries(${BINARY_NAME} PRIVATE "dwmapi.lib")
 # C++/WinRT: Windows.Media.Ocr, Windows.Data.Pdf, Windows.Media.Editing, Windows ML.
 target_link_libraries(${BINARY_NAME} PRIVATE "windowsapp.lib")
+# SAPI 5: the Windows speech engine that transcribes speech in videos.
+target_link_libraries(${BINARY_NAME} PRIVATE "sapi.lib" "ole32.lib")
 # C++/WinRT uses C++20 coroutines; in C++17 mode it falls back to <experimental/coroutine>,
 # which current MSVC rejects.
 target_compile_features(${BINARY_NAME} PRIVATE cxx_std_20)

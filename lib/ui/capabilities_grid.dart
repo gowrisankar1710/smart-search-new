@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 
 import '../app_controller.dart';
@@ -71,7 +69,7 @@ class _CategoryCard extends StatelessWidget {
         ResultFilter.slides => 'PowerPoint and OpenDocument – every slide',
         ResultFilter.text => 'Notes, code, logs, JSON and other plain text',
         ResultFilter.images => 'Text in pictures, and what photos show',
-        ResultFilter.media => Platform.isMacOS && controller.speechInVideos
+        ResultFilter.media => controller.speechInVideos
             ? 'On-screen text, subtitles and speech · videos up to 15 MB'
             : 'On-screen text and subtitles · videos up to 15 MB',
         ResultFilter.other => 'Archives and other files, by name',
