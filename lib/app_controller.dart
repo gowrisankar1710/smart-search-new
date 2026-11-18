@@ -110,6 +110,7 @@ class AppController extends ChangeNotifier {
     _upgradeOcr();
     _requeueSniffable();
     _upgradeContent();
+    _skipBigVideos();
     unawaited(_checkSpeech());
     unawaited(_checkEngines());
     roots = await Locations.roots(store.extraRoots);
@@ -170,12 +171,23 @@ class AppController extends ChangeNotifier {
     }
   }
 
+  /// Videos over 15 MB that an older version queued are found by name only now.
+  void _skipBigVideos() {
+    for (final f in store.files.values) {
+      if (f.status == IndexStatus.pending && isVideoCandidate(f.ext) && !isReadableVideo(f.ext, f.size)) {
+        f.status = IndexStatus.nameOnly;
+        store.dirty = true;
+      }
+    }
+  }
+
   /// Re-read files an older extractor cut short. They stay searchable meanwhile.
   void _upgradeContent() {
     if (store.contentVersion >= kContentVersion) return;
     const reread = {'pdf', 'xlsx', 'xlsm', 'ods'};
     for (final f in store.files.values) {
       if (isVideoCandidate(f.ext)) {
+        if (!isReadableVideo(f.ext, f.size)) continue; // over 15 MB: by name only
         // v4: read what videos show and say. v5: again, with per-word speech timing.
         // Already-read text stays searchable until the new reading replaces it.
         if (f.status != IndexStatus.pending) f.status = IndexStatus.pending;
@@ -311,7 +323,7 @@ class AppController extends ChangeNotifier {
       if (old != null && _lastQueued.containsKey(path)) return; // changing again and again – later
       _lastQueued[path] = now;
       final f = IndexedFile(path: path, size: st.size, modifiedMs: ms);
-      if (!(hasExtractableText(f.ext) || isOcrCandidate(f.ext) || isVideoCandidate(f.ext))) {
+      if (!(hasExtractableText(f.ext) || isOcrCandidate(f.ext) || isReadableVideo(f.ext, f.size))) {
         f.status = IndexStatus.nameOnly;
       }
       if (old == null) {
@@ -603,7 +615,7 @@ class AppController extends ChangeNotifier {
     if (speechGranted && !store.speechVideos) {
       store.speechVideos = true;
       for (final f in store.files.values) {
-        if (isVideoCandidate(f.ext) && f.status != IndexStatus.pending) f.status = IndexStatus.pending;
+        if (isReadableVideo(f.ext, f.size) && f.status != IndexStatus.pending) f.status = IndexStatus.pending;
       }
       if (store.initialDone) startBackground();
     }

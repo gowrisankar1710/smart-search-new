@@ -115,7 +115,7 @@ class IndexedFile {
 
   bool get needsText => status == IndexStatus.pending && hasExtractableText(ext) && !isScannedPdf;
   bool get needsOcr => status == IndexStatus.pending && (isOcrCandidate(ext) || isScannedPdf);
-  bool get needsVideo => status == IndexStatus.pending && isVideoCandidate(ext);
+  bool get needsVideo => status == IndexStatus.pending && isReadableVideo(ext, size);
   bool get isPending => needsText || needsOcr || needsVideo;
 
   Map<String, Object> toJson() => {

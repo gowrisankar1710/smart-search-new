@@ -72,8 +72,8 @@ class _CategoryCard extends StatelessWidget {
         ResultFilter.text => 'Notes, code, logs, JSON and other plain text',
         ResultFilter.images => 'Text in pictures, and what photos show',
         ResultFilter.media => Platform.isMacOS && controller.speechInVideos
-            ? 'On-screen text, subtitles and what people say'
-            : 'On-screen text and subtitles in videos',
+            ? 'On-screen text, subtitles and speech · videos up to 15 MB'
+            : 'On-screen text and subtitles · videos up to 15 MB',
         ResultFilter.other => 'Archives and other files, by name',
         ResultFilter.all => '',
       };

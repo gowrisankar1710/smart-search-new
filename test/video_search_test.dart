@@ -121,6 +121,25 @@ void main() {
     expect(store.files.values.where((f) => f.isPending), isEmpty);
   });
 
+  test('videos over 15 MB are found by name only, never analysed', () async {
+    final dir = await Directory.systemTemp.createTemp('big_video');
+    addTearDown(() => dir.delete(recursive: true));
+    final small = File('${dir.path}/clip.mp4')..writeAsBytesSync([0, 0, 0, 1]);
+    final big = File('${dir.path}/movie.mp4');
+    final raf = big.openSync(mode: FileMode.write)..setPositionSync((15 << 20) + 1)..writeByteSync(0);
+    raf.closeSync();
+    final analysed = <String>[];
+    final store = IndexStore();
+    await Indexer(store, SearchEngine(), _NoOcr(), video: _RecordingVideo(analysed)).run(
+      roots: [ScanRoot(dir.path, 'test')],
+      skipPaths: const [],
+      onProgress: (_) {},
+    );
+    expect(analysed, [small.path]);
+    expect(store.files[big.path]!.status, IndexStatus.nameOnly);
+    expect(store.files[big.path]!.isPending, isFalse);
+  });
+
   test('progress names the video being read and how far it has got', () async {
     final dir = await Directory.systemTemp.createTemp('video_progress');
     addTearDown(() => dir.delete(recursive: true));
@@ -166,4 +185,20 @@ class _NoOcr implements OcrEngine {
   Future<String> recognize(String path) async => '';
   @override
   Future<ImageReading> analyzeImage(String path) async => const ImageReading('');
+}
+
+class _RecordingVideo implements VideoAnalyzer {
+  _RecordingVideo(this.analysed);
+  final List<String> analysed;
+  @override
+  String get name => 'recording';
+  @override
+  Future<bool> readsMedia() async => true;
+  @override
+  void cancel() {}
+  @override
+  Future<List<VideoSegment>> analyze(String path, {void Function(double fraction)? onProgress}) async {
+    analysed.add(path);
+    return const [];
+  }
 }

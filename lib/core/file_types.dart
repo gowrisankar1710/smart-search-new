@@ -59,6 +59,13 @@ bool isOcrCandidate(String ext) => ocrExtensions.contains(ext);
 /// Videos whose content (on-screen text, speech, subtitle files) can be read.
 bool isVideoCandidate(String ext) => _videoExt.contains(ext);
 
+/// Videos larger than this are found by name only – never opened or analysed.
+/// Reading a big video takes minutes of heavy work and made slower PCs freeze.
+const int kMaxVideoBytes = 15 << 20; // 15 MB
+
+/// A video small enough to read inside (see [kMaxVideoBytes]).
+bool isReadableVideo(String ext, int size) => isVideoCandidate(ext) && size <= kMaxVideoBytes;
+
 /// Subtitle files that sit next to a video ("talk.mp4" + "talk.srt" / "talk.en.vtt").
 const subtitleExtensions = <String>{'srt', 'vtt'};
 

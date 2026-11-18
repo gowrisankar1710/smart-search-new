@@ -263,7 +263,7 @@ class Indexer {
               pending--;
             }
             final f = IndexedFile(path: path, size: size, modifiedMs: ms);
-            if (hasExtractableText(f.ext) || isOcrCandidate(f.ext) || isVideoCandidate(f.ext)) {
+            if (hasExtractableText(f.ext) || isOcrCandidate(f.ext) || isReadableVideo(f.ext, f.size)) {
               pending++;
             } else {
               f.status = IndexStatus.nameOnly;
