@@ -57,3 +57,14 @@ jobs:
             --title "Windows build ${{ github.run_number }} ($sha)" `
             --notes "Unzip and run smart_file_search.exe – keep the whole folder together. Built from commit $sha." `
             --latest
+          # Shown on the run's page, also to visitors who aren't signed in (artifacts aren't).
+          $url = "${{ github.server_url }}/${{ github.repository }}/releases/download/windows-${{ github.run_number }}/smart_file_search-windows.zip"
+          @(
+            "## Download (no sign-in needed)",
+            "",
+            "**[smart_file_search-windows.zip]($url)** – build ${{ github.run_number }}, commit $sha",
+            "",
+            "Newest build, always: ${{ github.server_url }}/${{ github.repository }}/releases/latest/download/smart_file_search-windows.zip",
+            "",
+            "Unzip and run ``smart_file_search.exe`` – keep the whole folder together."
+          ) -join "`n" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append

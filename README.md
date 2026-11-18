@@ -2,6 +2,12 @@
 
 Find any file by **what's inside it**: file names, folder names, document text (PDF, Word, Excel, PowerPoint, ODF, RTF, text/code) and **text inside images** (OCR). Typos, partial names and related words all work. Everything runs on the device.
 
+## Download for Windows
+
+**[Download the latest Windows build](https://github.com/gowrisankar1710/smart-search-new/releases/latest/download/smart_file_search-windows.zip)** (zip, no GitHub sign-in needed) · [all builds](https://github.com/gowrisankar1710/smart-search-new/releases)
+
+Unzip it and run `smart_file_search.exe`; keep the whole folder together. A new build is published automatically for every push to `main`.
+
 ## Quick start
 
 ```bash
