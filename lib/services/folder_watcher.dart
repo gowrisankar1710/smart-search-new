@@ -78,7 +78,8 @@ class FolderWatcher {
 
   void _onEvent(FileSystemEvent e) {
     var any = false;
-    for (final path in [e.path, if (e is FileSystemMoveEvent && e.destination != null) e.destination!]) {
+    for (final raw in [e.path, if (e is FileSystemMoveEvent && e.destination != null) e.destination!]) {
+      final path = cleanPath(raw); // "C:\\Users…" under a watched drive root
       if (_wanted(path)) any = _changed.add(path) || any;
     }
     if (any) _flush ??= Timer(settle, _report);

@@ -116,6 +116,7 @@ class AppController extends ChangeNotifier {
     _requeueSniffable();
     _upgradeContent();
     _skipBigVideos();
+    _dropWrongWindowsPaths();
     unawaited(_checkSpeech());
     unawaited(_checkEngines());
     roots = await Locations.roots(store.extraRoots);
@@ -177,6 +178,28 @@ class AppController extends ChangeNotifier {
   }
 
   /// Videos over 50 MB that an older version queued are found by name only now.
+  /// Windows: older versions listed drive C: as "C:\\Users\…", which slipped past the
+  /// skip list – the profile was indexed a second time under that spelling, along with
+  /// AppData, Windows and Program Files. Those entries go; the next scan keeps only the
+  /// right ones (most already exist under the normal spelling, already read).
+  void _dropWrongWindowsPaths() {
+    if (!Platform.isWindows) return;
+    final skip = [for (final s in Locations.skipPaths()) '${s.toLowerCase()}\\'];
+    bool skipped(String path) {
+      final lower = path.toLowerCase();
+      return skip.any(lower.startsWith);
+    }
+
+    final wrong = [
+      for (final path in store.files.keys)
+        if (cleanPath(path) != path || skipped(path)) path,
+    ];
+    for (final path in wrong) {
+      store.files.remove(path);
+    }
+    if (wrong.isNotEmpty) store.dirty = true;
+  }
+
   void _skipBigVideos() {
     for (final f in store.files.values) {
       if (f.status == IndexStatus.pending && isVideoCandidate(f.ext) && !isReadableVideo(f.ext, f.size)) {

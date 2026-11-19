@@ -84,6 +84,13 @@ String _extOf(String name) {
 bool _skipDir(String name) => _skipDirNames.contains(name.toLowerCase()) || _skipDirExts.contains(_extOf(name));
 bool _skipFile(String name) => _skipFileExts.contains(_extOf(name)) || name.toLowerCase().endsWith('-journal');
 
+/// [path] with doubled separators collapsed ("C:\\Users" → "C:\Users"); a network
+/// path keeps its leading "\\". Cheap when there's nothing to fix.
+String cleanPath(String path, {bool? windows}) {
+  if (!(windows ?? Platform.isWindows) || path.indexOf(r'\\', 1) < 0) return path;
+  return p.windows.normalize(path);
+}
+
 /// Would the full scan include [path] (found under [root])? Same rules: no hidden or
 /// Office lock files, nothing inside skipped folders. Used by the live folder watcher.
 bool isScannablePath(String path, String root) {
@@ -102,7 +109,7 @@ void _scanMain(_ScanRequest req) {
   String key(String s) => caseInsensitive ? s.toLowerCase() : s;
   final skip = req.skipPaths.map(key).toSet();
   final visited = <String>{};
-  final queue = ListQueue<String>()..addAll(req.roots);
+  final queue = ListQueue<String>()..addAll(req.roots.map(p.normalize));
   var batch = <Object>[];
   var count = 0;
   final tick = Stopwatch()..start();
@@ -124,16 +131,20 @@ void _scanMain(_ScanRequest req) {
       continue; // no permission / vanished
     }
     for (final e in entries) {
-      final name = p.basename(e.path);
+      // Windows lists the drive root "C:\" as "C:\\Users", "C:\\Windows"…: one form only,
+      // or the skip list (AppData, Windows, Program Files) and [visited] never match –
+      // the profile was read twice and app data and system folders read at all.
+      final path = cleanPath(e.path);
+      final name = p.basename(path);
       if (name.startsWith('.') || name.startsWith(r'~$')) continue;
       if (e is Directory) {
-        if (!_skipDir(name)) queue.add(e.path);
+        if (!_skipDir(name)) queue.add(path);
       } else if (e is File) {
         if (_skipFile(name)) continue;
         try {
           final st = e.statSync();
           batch
-            ..add(e.path)
+            ..add(path)
             ..add(st.size)
             ..add(st.modified.millisecondsSinceEpoch);
           count++;
