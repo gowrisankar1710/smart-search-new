@@ -37,7 +37,9 @@ abstract class OcrEngine {
 /// Windows v5: built-in Windows OCR and the bundled object classifier.
 /// Windows v6: OCR falls back to any installed language; small pictures are enlarged.
 /// v5 (Windows v7): Hindi and Tamil text is read too (Tesseract with bundled models).
-final int kOcrVersion = Platform.isWindows ? 7 : 5;
+/// Windows v8: a second, black-and-white look at pictures with text (large bold prices
+/// in shopping screenshots were missed).
+final int kOcrVersion = Platform.isWindows ? 8 : 5;
 
 /// Hindi and Tamil text. Neither Apple Vision nor Windows OCR reads these scripts, so
 /// Tesseract reads every picture, scanned page and video frame as well, with the models

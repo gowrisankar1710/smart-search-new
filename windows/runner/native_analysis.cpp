@@ -446,6 +446,52 @@ std::string Ocr(const wgi::SoftwareBitmap& bitmap) {
   return text;
 }
 
+// Darker than this (0-255) turns black, the rest white. Measured on shopping-app
+// screenshots: Windows OCR skipped the large bold prices (next to struck-out prices and
+// coloured arrows) entirely, and read them in this black-and-white version.
+constexpr uint32_t kBlackAndWhiteCut = 170;
+
+wgi::SoftwareBitmap BlackAndWhite(const wgi::SoftwareBitmap& bitmap) {
+  const uint32_t w = static_cast<uint32_t>(bitmap.PixelWidth());
+  const uint32_t h = static_cast<uint32_t>(bitmap.PixelHeight());
+  const uint32_t size = w * h * 4;
+  wss::Buffer buffer(size);
+  bitmap.CopyToBuffer(buffer);
+  buffer.Length(size);
+  uint8_t* px = buffer.data();
+  for (uint32_t i = 0; i < size; i += 4) {
+    const uint32_t v = (114 * px[i] + 587 * px[i + 1] + 299 * px[i + 2]) / 1000;  // BGRA
+    const uint8_t bw = v < kBlackAndWhiteCut ? 0 : 255;
+    px[i] = px[i + 1] = px[i + 2] = bw;
+    px[i + 3] = 255;
+  }
+  return wgi::SoftwareBitmap::CreateCopyFromBuffer(buffer, wgi::BitmapPixelFormat::Bgra8, w, h,
+                                                   wgi::BitmapAlphaMode::Premultiplied);
+}
+
+std::vector<std::string> SplitLines(const std::string& text);  // below
+
+// Pictures: the normal reading, then lines a black-and-white look adds. Only when the
+// first look found text – a photo without any is not read twice.
+std::string OcrPicture(const wgi::SoftwareBitmap& bitmap) {
+  std::string text = Ocr(bitmap);
+  auto engine = OcrEngineForThread();
+  if (text.empty() || !engine) return text;
+  try {
+    const auto lines = SplitLines(text);
+    std::set<std::string> seen(lines.begin(), lines.end());
+    auto result = engine.RecognizeAsync(BlackAndWhite(bitmap)).get();
+    for (const auto& line : result.Lines()) {
+      const std::string l = winrt::to_string(line.Text());
+      if (l.empty() || !seen.insert(l).second) continue;
+      text += "\n";
+      text += l;
+    }
+  } catch (...) {
+  }
+  return text;
+}
+
 bool EndsWithPdf(const std::string& path) {
   if (path.size() < 4) return false;
   std::string ext = path.substr(path.size() - 4);
@@ -636,7 +682,7 @@ EncodableValue AnalyzeImage(const std::string& path) {
   }
   auto stream = OpenFile(path);
   try {
-    out[EncodableValue("text")] = EncodableValue(Ocr(Decode(stream, OcrMaxSide(), kOcrMinSide)));
+    out[EncodableValue("text")] = EncodableValue(OcrPicture(Decode(stream, OcrMaxSide(), kOcrMinSide)));
   } catch (...) {
   }
   try {
@@ -958,7 +1004,7 @@ void HandleOcr(const flutter::MethodCall<EncodableValue>& call, std::unique_ptr<
       if (full) {
         value = AnalyzeImage(p);
       } else {
-        value = EncodableValue(EndsWithPdf(p) ? OcrPdf(p) : Ocr(Decode(OpenFile(p), OcrMaxSide(), kOcrMinSide)));
+        value = EncodableValue(EndsWithPdf(p) ? OcrPdf(p) : OcrPicture(Decode(OpenFile(p), OcrMaxSide(), kOcrMinSide)));
       }
     } catch (...) {
     }

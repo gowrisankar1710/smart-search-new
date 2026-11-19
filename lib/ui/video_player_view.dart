@@ -12,8 +12,9 @@ import '../services/video_service.dart';
 import 'format.dart';
 import 'result_tile.dart';
 
-/// video_player plays files on these platforms; elsewhere the system player is used.
-bool get inAppVideo => Platform.isMacOS || Platform.isIOS || Platform.isAndroid;
+/// video_player plays files on these platforms (Windows through video_player_win);
+/// elsewhere the system player is used, which can't be told where to start.
+bool get inAppVideo => Platform.isMacOS || Platform.isIOS || Platform.isAndroid || Platform.isWindows;
 
 /// Opens a result. Videos matched by their content start playing at the first matching moment.
 Future<void> openHit(BuildContext context, SearchHit hit) {
@@ -61,8 +62,7 @@ class _VideoPlayerViewState extends State<VideoPlayerView> {
     super.initState();
     _video.addListener(_tick);
     _video.initialize().then((_) async {
-      await _video.seekTo(widget.start.at);
-      await _video.play();
+      await _startAt(widget.start.at);
       if (mounted) setState(() {});
     }).catchError((Object e) {
       if (mounted) setState(() => _error = e);
@@ -83,8 +83,21 @@ class _VideoPlayerViewState extends State<VideoPlayerView> {
 
   Future<void> _jump(VideoSegment m) async {
     setState(() => _current = m);
-    await _video.seekTo(m.at);
+    await _startAt(m.at);
+  }
+
+  /// Plays from [at]. Windows' media engine can drop a seek made just as playback
+  /// starts and play from the beginning: if it isn't near [at] a moment later, seek again.
+  Future<void> _startAt(Duration at) async {
+    await _video.seekTo(at);
     await _video.play();
+    if (at < const Duration(seconds: 3)) return;
+    await Future<void>.delayed(const Duration(milliseconds: 700));
+    if (!mounted) return;
+    final pos = _video.value.position;
+    if (pos < at - const Duration(seconds: 3) || pos > at + const Duration(seconds: 10)) {
+      await _video.seekTo(at);
+    }
   }
 
   void _toggle() => _video.value.isPlaying ? _video.pause() : _video.play();
