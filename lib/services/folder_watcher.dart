@@ -84,26 +84,35 @@ class FolderWatcher {
     if (any) _flush ??= Timer(settle, _report);
   }
 
-  void _report() {
-    _flush = null;
-    if (_changed.isEmpty) return;
+  /// Checks off the UI thread (async stat): with whole drives watched, a burst of
+  /// changes can be hundreds of paths, and blocking checks froze typing.
+  Future<void> _report() async {
+    if (_changed.isEmpty) {
+      _flush = null;
+      return;
+    }
+    final batch = List.of(_changed);
+    _changed.clear();
+    final stats = await Future.wait(batch.map((path) async {
+      try {
+        return await FileStat.stat(path);
+      } catch (_) {
+        return null;
+      }
+    }));
+    if (_subs.isEmpty) return; // stopped meanwhile
     final now = DateTime.now();
     final ready = <String>{};
-    final busy = <String>{};
-    for (final path in _changed) {
-      try {
-        final st = FileStat.statSync(path);
-        if (st.type == FileSystemEntityType.file && now.difference(st.modified) < quiet) {
-          busy.add(path); // still being written – look again shortly
-          continue;
-        }
-      } catch (_) {}
-      ready.add(path);
+    for (var i = 0; i < batch.length; i++) {
+      final st = stats[i];
+      if (st != null && st.type == FileSystemEntityType.file && now.difference(st.modified) < quiet) {
+        _changed.add(batch[i]); // still being written – look again shortly
+      } else {
+        ready.add(batch[i]);
+      }
     }
-    _changed
-      ..clear()
-      ..addAll(busy);
-    if (busy.isNotEmpty) _flush = Timer(settle, _report);
+    // Events that came in while checking are in [_changed] too.
+    _flush = _changed.isEmpty ? null : Timer(settle, _report);
     if (ready.isNotEmpty) onChanges(ready);
   }
 }

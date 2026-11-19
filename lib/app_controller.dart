@@ -99,11 +99,13 @@ class AppController extends ChangeNotifier {
   DateTime _lastNotify = DateTime(2000);
   DateTime _lastAutoScan = DateTime(2000);
 
-  /// Background reading stays gentle – a quarter of the cores for documents (1–3) and
-  /// 1–2 picture readers – so the computer stays responsive. The first analysis, which
+  /// Background reading stays gentle – a quarter of the cores for documents and for
+  /// pictures, but at least two of each (one each made a big first index take hours on
+  /// 4-core PCs). Picture reading runs at low priority in the OS engines, and the UI
+  /// thread only receives results, so typing stays smooth. The first analysis, which
   /// the user waits for, uses more.
-  static final int _bgWorkers = (Platform.numberOfProcessors ~/ 4).clamp(1, 3);
-  static final int _bgOcrLanes = (Platform.numberOfProcessors ~/ 4).clamp(1, 2);
+  static final int _bgWorkers = (Platform.numberOfProcessors ~/ 4).clamp(2, 3);
+  static final int _bgOcrLanes = (Platform.numberOfProcessors ~/ 4).clamp(2, 3);
 
   bool get needsOnboarding => !store.initialDone;
 
@@ -322,6 +324,7 @@ class AppController extends ChangeNotifier {
   Future<void> _onDiskChanges(Set<String> paths) async {
     if (!ready) return;
     final toRead = <IndexedFile>[];
+    final goneFolders = <String>{};
     var changed = false;
 
     final now = DateTime.now();
@@ -369,17 +372,30 @@ class AppController extends ChangeNotifier {
             }
           } catch (_) {}
         case FileSystemEntityType.notFound:
-          // Deleted or moved away – a file, or a whole folder of them.
-          final gone = store.files.containsKey(path)
-              ? [path]
-              : store.files.keys.where((k) => p.isWithin(path, k)).toList();
-          for (final k in gone) {
-            store.files.remove(k);
-            engine.remove(k);
+          // Deleted or moved away – a file, or a whole folder of them (checked below,
+          // all at once: Windows creates and deletes temporary files all the time).
+          if (store.files.remove(path) != null) {
+            engine.remove(path);
             changed = true;
+          } else {
+            goneFolders.add(path);
           }
         default:
           break;
+      }
+    }
+    if (goneFolders.isNotEmpty) {
+      // In slices, so typing never waits on a pass over a large index.
+      final keys = List.of(store.files.keys);
+      final gone = <String>[];
+      for (var i = 0; i < keys.length; i++) {
+        if (_insideAny(goneFolders, keys[i])) gone.add(keys[i]);
+        if (i % 4000 == 3999) await Future<void>.delayed(Duration.zero);
+      }
+      for (final k in gone) {
+        if (store.files.remove(k) == null) continue;
+        engine.remove(k);
+        changed = true;
       }
     }
     if (!changed) return;
@@ -401,6 +417,17 @@ class AppController extends ChangeNotifier {
       unawaited(store.save());
     });
     notifyListeners();
+  }
+
+  /// Is [path] inside one of [folders]? A walk up its parent folders: one pass over the
+  /// index for a whole batch of deletions, instead of one pass per deleted path.
+  static bool _insideAny(Set<String> folders, String path) {
+    var i = path.lastIndexOf(p.separator);
+    while (i > 0) {
+      if (folders.contains(path.substring(0, i))) return true;
+      i = path.lastIndexOf(p.separator, i - 1);
+    }
+    return false;
   }
 
   final List<RecentAdd> _recentAdds = [];

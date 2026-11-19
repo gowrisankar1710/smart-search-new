@@ -52,6 +52,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     c.removeListener(_onController);
     _debounce?.cancel();
+    _refresh?.cancel();
     _remember?.cancel();
     _query.dispose();
     _focus.dispose();
@@ -61,12 +62,30 @@ class _HomeScreenState extends State<HomeScreen> {
   void _onController() {
     if (c.revision != _seenRevision) {
       _seenRevision = c.revision;
-      if (_query.text.trim().isNotEmpty) _search();
+      if (_query.text.trim().isNotEmpty) _scheduleRefresh();
     }
+  }
+
+  /// Files read or changed while a search is open show up in it – but quietly, at most
+  /// every [_refreshGap]: while files are being read the index changes many times a
+  /// second, and re-running the search each time made the list flicker and typing lag.
+  static const _refreshGap = Duration(seconds: 2);
+  Timer? _refresh;
+
+  void _scheduleRefresh() {
+    _refresh ??= Timer(_refreshGap, () {
+      _refresh = null;
+      if (!mounted || _query.text.trim().isEmpty) return;
+      // Typing or a search still running: that search sees the new files anyway.
+      if ((_debounce?.isActive ?? false) || _searching) return _scheduleRefresh();
+      _search(quiet: true);
+    });
   }
 
   void _onChanged(String _) {
     setState(() {});
+    _refresh?.cancel();
+    _refresh = null;
     _debounce?.cancel();
     _remember?.cancel();
     _debounce = Timer(const Duration(milliseconds: 160), _search);
@@ -92,7 +111,10 @@ class _HomeScreenState extends State<HomeScreen> {
   int _gen = 0; // bumps on every new query; older runs see it and stop
   bool _searching = false;
 
-  Future<void> _search() async {
+  /// [quiet]: a refresh for files read meanwhile, not something the user typed – the
+  /// list on screen stays as it is (no spinner, no half-finished list) and is replaced
+  /// only if the finished search found something different.
+  Future<void> _search({bool quiet = false}) async {
     final gen = ++_gen;
     void show(SearchResult r) {
       if (!mounted || gen != _gen) return;
@@ -102,16 +124,22 @@ class _HomeScreenState extends State<HomeScreen> {
       });
     }
 
-    setState(() => _searching = true);
-    if (_query.text.trim().isNotEmpty) c.searchBegan();
+    if (!quiet) {
+      setState(() => _searching = true);
+      if (_query.text.trim().isNotEmpty) c.searchBegan();
+    }
     final r = await c.engine.findAsync(
       _query.text,
       kinds: _filter.kinds,
       under: _under,
       cancelled: () => !mounted || gen != _gen,
-      onPartial: show,
+      onPartial: quiet ? null : show,
     );
     if (r == null || !mounted || gen != _gen) return;
+    if (quiet) {
+      if (!_sameHits(_result, r)) show(r);
+      return;
+    }
     show(r);
     setState(() => _searching = false);
     if (_query.text.trim().isNotEmpty) c.searchFinished(r.took);
@@ -123,8 +151,18 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  static bool _sameHits(SearchResult a, SearchResult b) {
+    if (a.total != b.total || a.hits.length != b.hits.length) return false;
+    for (var i = 0; i < a.hits.length; i++) {
+      if (!identical(a.hits[i].file, b.hits[i].file)) return false;
+    }
+    return true;
+  }
+
   void _clear() {
     _remember?.cancel();
+    _refresh?.cancel();
+    _refresh = null;
     _query.clear();
     _gen++;
     setState(() {

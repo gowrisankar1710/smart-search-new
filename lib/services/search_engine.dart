@@ -160,7 +160,7 @@ class SearchEngine {
     final mobile = Platform.isAndroid || Platform.isIOS;
     // Half the cores at most: the rest stay free for the user while the app starts.
     final lanes = (Platform.numberOfProcessors ~/ 2).clamp(1, mobile ? 2 : 4);
-    const chunk = 400;
+    const chunk = 200; // each batch's word counts are unpacked on the UI thread: keep it short
     var next = 0;
     var done = 0;
     onContent?.call(0, withText.length);

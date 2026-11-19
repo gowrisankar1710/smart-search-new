@@ -129,7 +129,11 @@ class IndexStore {
         'extra': List<String>.of(extraRoots),
       };
 
-  /// Hands the files to a helper isolate a few MB at a time; it encodes, compresses and
+  /// Each hand-over to the save helper is built on the UI thread: kept small so a save
+  /// during a search never makes typing stutter.
+  static const _saveBatchBytes = 512 << 10;
+
+  /// Hands the files to a helper isolate half a MB at a time; it encodes, compresses and
   /// writes them. Memory stays flat and the UI thread only copies small batches.
   Future<void> _write() async {
     final file = _file;
@@ -154,7 +158,7 @@ class IndexStore {
       for (final f in list) {
         batch.add(f.toJson());
         size += f.content.length + 256;
-        if (size >= 2 << 20) {
+        if (size >= _saveBatchBytes) {
           worker.send(batch);
           await ack();
           batch = [];
