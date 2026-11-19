@@ -19,7 +19,6 @@ dependencies:
   syncfusion_flutter_pdf: ^27.1.48      # pure-Dart PDF text extraction (all platforms)
   google_mlkit_text_recognition: ^0.14.0 # on-device OCR (Android / iOS)
   video_player: ^2.14.1
-  video_player_win: ^3.3.1 # Windows playback for video_player, so videos start at the match
 
 dev_dependencies:
   flutter_test:

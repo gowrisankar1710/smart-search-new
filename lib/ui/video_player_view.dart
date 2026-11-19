@@ -12,9 +12,9 @@ import '../services/video_service.dart';
 import 'format.dart';
 import 'result_tile.dart';
 
-/// video_player plays files on these platforms (Windows through video_player_win);
-/// elsewhere the system player is used, which can't be told where to start.
-bool get inAppVideo => Platform.isMacOS || Platform.isIOS || Platform.isAndroid || Platform.isWindows;
+/// video_player plays files on these platforms; elsewhere the system player is used,
+/// which can't be told where to start.
+bool get inAppVideo => Platform.isMacOS || Platform.isIOS || Platform.isAndroid;
 
 /// Opens a result. Videos matched by their content start playing at the first matching moment.
 Future<void> openHit(BuildContext context, SearchHit hit) {
