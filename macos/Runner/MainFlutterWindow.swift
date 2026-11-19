@@ -1,6 +1,7 @@
 import Cocoa
 import FlutterMacOS
 import Vision
+import CoreImage
 import AVFoundation
 import Speech
 
@@ -48,6 +49,15 @@ enum VisionOcr {
       switch call.method {
       case "isAvailable":
         result(true)
+      case "configureIndic":
+        guard let args = call.arguments as? [String: Any], let bin = args["bin"] as? String,
+              let dir = args["tessdata"] as? String, let langs = args["languages"] as? String
+        else {
+          result(FlutterError(code: "bad_args", message: "bin, tessdata, languages required", details: nil))
+          return
+        }
+        IndicOcr.configure(bin: bin, tessdata: dir, languages: langs)
+        result(nil)
       case "recognize":
         guard let args = call.arguments as? [String: Any], let path = args["path"] as? String else {
           result(FlutterError(code: "bad_args", message: "path required", details: nil))
@@ -96,6 +106,7 @@ enum VisionOcr {
       if #available(macOS 12.0, *) { people.upperBodyOnly = false }
       try? handler.perform([text, classify, salient, people])
       let lines = (text.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+        + IndicOcr.lines(image, orientation: orientation(src))
 
       // Whole picture first, then close-ups of people and the main objects: small
       // subjects (a bird on a rock, a saree on a person) score far higher on their own.
@@ -199,7 +210,10 @@ enum VisionOcr {
     if url.pathExtension.lowercased() == "pdf" {
       return recognizePdf(url: url)
     }
-    return autoreleasepool { run(VNImageRequestHandler(url: url, options: [:])) }
+    return autoreleasepool {
+      guard let src = CGImageSourceCreateWithURL(url as CFURL, nil), let image = decode(src) else { return "" }
+      return read(image, orientation: orientation(src))
+    }
   }
 
   /// Scanned or image-only PDFs have no text layer: render each page and read it.
@@ -209,7 +223,7 @@ enum VisionOcr {
     for i in 1...min(doc.numberOfPages, maxPdfPages) {
       autoreleasepool {
         guard let page = doc.page(at: i), let image = render(page) else { return }
-        let text = run(VNImageRequestHandler(cgImage: image, options: [:]))
+        let text = read(image)
         if !text.isEmpty { pages.append(text) }
       }
     }
@@ -233,6 +247,15 @@ enum VisionOcr {
     return ctx.makeImage()
   }
 
+  /// Vision's lines, then any Hindi / Tamil lines Tesseract reads in the same picture.
+  /// Vision's lines, then any Hindi / Tamil lines Tesseract reads in the same picture.
+  static func read(_ image: CGImage, orientation: CGImagePropertyOrientation = .up) -> String {
+    let lines = run(VNImageRequestHandler(cgImage: image, orientation: orientation, options: [:]))
+    let indic = IndicOcr.lines(image, orientation: orientation)
+    if indic.isEmpty { return lines }
+    return ([lines].filter { !$0.isEmpty } + indic).joined(separator: "\n")
+  }
+
   static func run(_ handler: VNImageRequestHandler) -> String {
     let request = textRequest()
     do {
@@ -242,6 +265,88 @@ enum VisionOcr {
     }
     let lines = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
     return lines.joined(separator: "\n")
+  }
+}
+
+/// Hindi and Tamil text, which Apple Vision doesn't read: Tesseract (installed by the user)
+/// with the models bundled in the app. Dart says where both are; until then nothing runs.
+/// Only lines with a confidently read Devanagari or Tamil word are kept – Vision already
+/// has the English, and Tesseract turns plain photos and Latin text into low-confidence noise.
+enum IndicOcr {
+  private static let lock = NSLock()
+  private static var config: (bin: String, tessdata: String, languages: String)?
+  /// Tesseract's per-word confidence (0–100). Real text scores 80+, noise under 30.
+  private static let minConfidence = 60.0
+  private static let context = CIContext(options: [.useSoftwareRenderer: false])
+
+  static func configure(bin: String, tessdata: String, languages: String) {
+    lock.lock(); config = (bin, tessdata, languages); lock.unlock()
+  }
+
+  private static var current: (bin: String, tessdata: String, languages: String)? {
+    lock.lock(); defer { lock.unlock() }; return config
+  }
+
+  static func lines(_ image: CGImage, orientation: CGImagePropertyOrientation = .up) -> [String] {
+    guard let c = current else { return [] }
+    // Tesseract doesn't rotate pictures itself: hand it the upright view.
+    var upright = image
+    if orientation != .up,
+       let turned = context.createCGImage(
+         CIImage(cgImage: image).oriented(orientation), from: CIImage(cgImage: image).oriented(orientation).extent) {
+      upright = turned
+    }
+    let png = FileManager.default.temporaryDirectory.appendingPathComponent("sfs-ocr-\(UUID().uuidString).png")
+    defer { try? FileManager.default.removeItem(at: png) }
+    guard let dest = CGImageDestinationCreateWithURL(png as CFURL, "public.png" as CFString, 1, nil) else { return [] }
+    CGImageDestinationAddImage(dest, upright, nil)
+    guard CGImageDestinationFinalize(dest) else { return [] }
+
+    let p = Process()
+    // Through env: Dart may have found Tesseract on PATH by its bare name.
+    p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+    p.arguments = [c.bin, png.path, "stdout", "-l", c.languages, "--tessdata-dir", c.tessdata,
+                   "--psm", "3", "-c", "tessedit_create_tsv=1"]
+    var env = ProcessInfo.processInfo.environment
+    env["OMP_THREAD_LIMIT"] = "1" // one thread each: several pictures are read at once
+    env["PATH"] = (env["PATH"] ?? "/usr/bin:/bin") + ":/opt/homebrew/bin:/usr/local/bin"
+    p.environment = env
+    let out = Pipe()
+    p.standardOutput = out
+    p.standardError = FileHandle.nullDevice
+    do { try p.run() } catch { return [] }
+    let timer = DispatchWorkItem { if p.isRunning { p.terminate() } }
+    DispatchQueue.global().asyncAfter(deadline: .now() + 20, execute: timer)
+    let data = out.fileHandleForReading.readDataToEndOfFile()
+    p.waitUntilExit()
+    timer.cancel()
+    guard p.terminationStatus == 0 else { return [] }
+    return parse(String(decoding: data, as: UTF8.self))
+  }
+
+  /// TSV rows: level, page, block, paragraph, line, word, left, top, width, height, conf, text.
+  static func parse(_ tsv: String) -> [String] {
+    var order: [String] = []
+    var words: [String: [String]] = [:]
+    var indic = Set<String>()
+    for row in tsv.split(separator: "\n").dropFirst() {
+      let c = row.split(separator: "\t", omittingEmptySubsequences: false)
+      guard c.count >= 12, c[0] == "5", let conf = Double(c[10]), conf >= minConfidence else { continue }
+      let word = String(c[11]).replacingOccurrences(of: "\u{200C}", with: "")
+        .replacingOccurrences(of: "\u{200D}", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+      if word.isEmpty { continue }
+      let key = "\(c[2]).\(c[3]).\(c[4])"
+      if words[key] == nil { order.append(key) }
+      words[key, default: []].append(word)
+      if isIndic(word) { indic.insert(key) }
+    }
+    return order.filter { indic.contains($0) }.map { words[$0]!.joined(separator: " ") }
+  }
+
+  /// At least two Devanagari or Tamil characters – a lone one is usually noise.
+  private static func isIndic(_ word: String) -> Bool {
+    word.unicodeScalars.filter { (0x0900...0x097F).contains($0.value) || (0x0B80...0x0BFF).contains($0.value) }
+      .count >= 2
   }
 }
 
@@ -356,7 +461,7 @@ enum VideoAnalysis {
         var actual = CMTime.zero
         guard let image = try? gen.copyCGImage(at: CMTime(seconds: t, preferredTimescale: 600), actualTime: &actual)
         else { return }
-        let lines = VisionOcr.run(VNImageRequestHandler(cgImage: image, options: [:]))
+        let lines = VisionOcr.read(image)
           .split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         // Only lines that just appeared: a slide's text is timed to when it first shows.
         let fresh = lines.filter { !previous.contains($0) }

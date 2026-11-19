@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 import '../core/constants.dart';
 import '../core/file_types.dart';
 import '../core/indexed_file.dart';
+import 'ocr_service.dart';
 
 /// Finds what is said and shown in a video, with the moment each piece appears.
 abstract class VideoAnalyzer {
@@ -75,6 +76,7 @@ class NativeVideoAnalyzer implements VideoAnalyzer {
   @override
   Future<bool> readsMedia() async {
     if (_native != null) return _native!;
+    await IndicText.configureNative(); // Windows: Hindi/Tamil alone is enough to read frames
     try {
       _native = await _channel.invokeMethod<bool>('isAvailable') ?? false;
     } catch (_) {

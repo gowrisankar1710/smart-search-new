@@ -28,7 +28,8 @@ const Duration kFirstRescanDelay = Duration(minutes: 1);
 /// Windows v7: OCR falls back to any installed language, small text is enlarged first,
 /// and video frames are read at keyframes – videos and scanned PDFs are read again.
 /// Windows v8: speech in videos is read (Windows speech engine) – videos are read again.
-final int kContentVersion = Platform.isWindows ? 8 : 5;
+/// v6 (Windows v9): Hindi and Tamil text in videos and scanned PDFs – both are read again.
+final int kContentVersion = Platform.isWindows ? 9 : 6;
 
 /// Longest a single video may take to analyse before it is marked failed.
 const Duration kVideoAnalysisLimit = Duration(minutes: 15);

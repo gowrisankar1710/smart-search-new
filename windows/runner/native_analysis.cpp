@@ -27,6 +27,7 @@
 #include <cmath>
 #include <deque>
 #include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <set>
@@ -226,6 +227,193 @@ OcrEngine OcrEngineForThread() {
   return engine;
 }
 
+// ------------------------------------------------------------------ Hindi / Tamil (Tesseract)
+//
+// Windows OCR has no Hindi or Tamil. Tesseract (installed by the user) reads them with the
+// models bundled in the app; Dart says where both are, and until then nothing runs. Only
+// lines with a confidently read Devanagari or Tamil word are kept: Windows OCR already has
+// the English, and Tesseract turns plain photos and Latin text into low-confidence noise.
+
+struct IndicConfig {
+  std::wstring bin;
+  std::wstring tessdata;
+  std::wstring languages;
+};
+
+std::mutex g_indic_mutex;
+std::shared_ptr<const IndicConfig> g_indic;
+std::atomic<uint32_t> g_indic_counter{0};
+
+std::shared_ptr<const IndicConfig> IndicConfigNow() {
+  std::lock_guard<std::mutex> lock(g_indic_mutex);
+  return g_indic;
+}
+
+bool IndicReady() { return IndicConfigNow() != nullptr; }
+
+void ConfigureIndic(const std::string& bin, const std::string& tessdata, const std::string& languages) {
+  // One thread per Tesseract run: several pictures are read at once.
+  SetEnvironmentVariableW(L"OMP_THREAD_LIMIT", L"1");
+  auto c = std::make_shared<IndicConfig>();
+  c->bin = std::wstring(winrt::to_hstring(bin));
+  c->tessdata = std::wstring(winrt::to_hstring(tessdata));
+  c->languages = std::wstring(winrt::to_hstring(languages));
+  std::lock_guard<std::mutex> lock(g_indic_mutex);
+  g_indic = c;
+}
+
+bool WritePng(const wgi::SoftwareBitmap& bitmap, const std::wstring& path) {
+  const auto opaque =
+      wgi::SoftwareBitmap::Convert(bitmap, wgi::BitmapPixelFormat::Bgra8, wgi::BitmapAlphaMode::Ignore);
+  wss::InMemoryRandomAccessStream stream;
+  auto encoder = wgi::BitmapEncoder::CreateAsync(wgi::BitmapEncoder::PngEncoderId(), stream).get();
+  encoder.SetSoftwareBitmap(opaque);
+  encoder.FlushAsync().get();
+  const auto size = static_cast<uint32_t>(stream.Size());
+  wss::Buffer buffer(size);
+  stream.Seek(0);
+  stream.ReadAsync(buffer, size, wss::InputStreamOptions::None).get();
+  HANDLE f = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_TEMPORARY, nullptr);
+  if (f == INVALID_HANDLE_VALUE) return false;
+  DWORD written = 0;
+  const bool ok = WriteFile(f, buffer.data(), buffer.Length(), &written, nullptr) && written == buffer.Length();
+  CloseHandle(f);
+  return ok;
+}
+
+// Runs |command| without a window and returns what it printed, or "" if it failed.
+// A run that takes longer than 20 s is stopped.
+std::string RunCapture(std::wstring command) {
+  SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
+  HANDLE read = nullptr, write = nullptr;
+  if (!CreatePipe(&read, &write, &sa, 0)) return "";
+  SetHandleInformation(read, HANDLE_FLAG_INHERIT, 0);
+  HANDLE nul = CreateFileW(L"NUL", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa,
+                           OPEN_EXISTING, 0, nullptr);
+  STARTUPINFOW si{};
+  si.cb = sizeof(si);
+  si.dwFlags = STARTF_USESTDHANDLES;
+  si.hStdInput = nul;
+  si.hStdOutput = write;
+  si.hStdError = nul;
+  PROCESS_INFORMATION pi{};
+  const BOOL started = CreateProcessW(nullptr, command.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr,
+                                      nullptr, &si, &pi);
+  CloseHandle(write);
+  if (nul != INVALID_HANDLE_VALUE) CloseHandle(nul);
+  if (!started) {
+    CloseHandle(read);
+    return "";
+  }
+  HANDLE process = pi.hProcess;
+  std::thread watchdog([process]() {
+    if (WaitForSingleObject(process, 20000) == WAIT_TIMEOUT) TerminateProcess(process, 1);
+  });
+  std::string out;
+  char chunk[4096];
+  DWORD n = 0;
+  while (ReadFile(read, chunk, sizeof(chunk), &n, nullptr) && n > 0) out.append(chunk, n);
+  watchdog.join();
+  DWORD code = 1;
+  GetExitCodeProcess(process, &code);
+  CloseHandle(read);
+  CloseHandle(pi.hThread);
+  CloseHandle(process);
+  return code == 0 ? out : "";
+}
+
+// At least two Devanagari (U+0900–097F) or Tamil (U+0B80–0BFF) characters: a lone one
+// is usually noise. In UTF-8 both blocks start E0 A4/A5 and E0 AE/AF.
+bool IsIndicWord(const std::string& w) {
+  int count = 0;
+  for (size_t i = 0; i + 1 < w.size(); i++) {
+    const auto b0 = static_cast<unsigned char>(w[i]);
+    const auto b1 = static_cast<unsigned char>(w[i + 1]);
+    if (b0 == 0xE0 && (b1 == 0xA4 || b1 == 0xA5 || b1 == 0xAE || b1 == 0xAF) && ++count >= 2) return true;
+  }
+  return false;
+}
+
+std::string WithoutJoiners(std::string w) {
+  for (const char* j : {"\xE2\x80\x8C", "\xE2\x80\x8D"}) {  // zero-width (non-)joiner
+    for (size_t at; (at = w.find(j)) != std::string::npos;) w.erase(at, 3);
+  }
+  return w;
+}
+
+// Tesseract TSV rows: level, page, block, paragraph, line, word, left, top, width,
+// height, conf, text. Words below this confidence (0–100) are dropped: real text
+// scores 80+, noise under 30.
+std::vector<std::string> ParseIndicTsv(const std::string& tsv, bool indic_only) {
+  constexpr double kMinConfidence = 60;
+  std::vector<std::string> order;
+  std::map<std::string, std::string> lines;
+  std::set<std::string> indic;
+  std::stringstream rows(tsv);
+  std::string row;
+  bool header = true;
+  while (std::getline(rows, row)) {
+    if (header) {
+      header = false;
+      continue;
+    }
+    if (!row.empty() && row.back() == '\r') row.pop_back();
+    std::vector<std::string> c;
+    std::stringstream cells(row);
+    std::string cell;
+    while (std::getline(cells, cell, '\t')) c.push_back(cell);
+    if (c.size() < 12 || c[0] != "5") continue;
+    double conf = -1;
+    try {
+      conf = std::stod(c[10]);
+    } catch (...) {
+      continue;
+    }
+    if (conf < kMinConfidence) continue;
+    std::string word = WithoutJoiners(c[11]);
+    const auto b = word.find_first_not_of(" \t");
+    if (b == std::string::npos) continue;
+    word = word.substr(b, word.find_last_not_of(" \t") - b + 1);
+    const std::string key = c[2] + "." + c[3] + "." + c[4];
+    auto it = lines.find(key);
+    if (it == lines.end()) {
+      order.push_back(key);
+      lines[key] = word;
+    } else {
+      it->second += " " + word;
+    }
+    if (IsIndicWord(word)) indic.insert(key);
+  }
+  std::vector<std::string> out;
+  for (const auto& k : order) {
+    if (!indic_only || indic.count(k)) out.push_back(lines[k]);
+  }
+  return out;
+}
+
+// With |english|, there is no Windows OCR language on this PC: Tesseract reads English
+// too, and every confident line is kept.
+std::vector<std::string> IndicLines(const wgi::SoftwareBitmap& bitmap, bool english) {
+  const auto c = IndicConfigNow();
+  if (!c) return {};
+  wchar_t dir[MAX_PATH];
+  const DWORD n = GetTempPathW(MAX_PATH, dir);
+  if (n == 0 || n > MAX_PATH) return {};
+  const std::wstring png = std::wstring(dir, n) + L"sfs-ocr-" + std::to_wstring(GetCurrentProcessId()) + L"-" +
+                           std::to_wstring(g_indic_counter.fetch_add(1)) + L".png";
+  std::vector<std::string> out;
+  try {
+    if (WritePng(bitmap, png)) {
+      const std::wstring command = L"\"" + c->bin + L"\" \"" + png + L"\" stdout -l " + (english ? L"eng+" : L"") + c->languages +
+                                   L" --tessdata-dir \"" + c->tessdata + L"\" --psm 3 -c tessedit_create_tsv=1";
+      out = ParseIndicTsv(RunCapture(command), !english);
+    }
+  } catch (...) {
+  }
+  DeleteFileW(png.c_str());
+  return out;
+}
+
 // Pictures smaller than this are enlarged before OCR (see Decode).
 constexpr uint32_t kOcrMinSide = 1800;
 
@@ -238,16 +426,24 @@ uint32_t OcrMaxSide() {
   }
 }
 
+// Windows OCR's lines, then any Hindi / Tamil lines Tesseract reads in the same picture.
 std::string Ocr(const wgi::SoftwareBitmap& bitmap) {
+  std::string text;
   auto engine = OcrEngineForThread();
-  if (!engine) return "";
-  auto result = engine.RecognizeAsync(bitmap).get();
-  std::wstring out;
-  for (const auto& line : result.Lines()) {
-    if (!out.empty()) out += L"\n";
-    out += line.Text().c_str();
+  if (engine) {
+    auto result = engine.RecognizeAsync(bitmap).get();
+    std::wstring out;
+    for (const auto& line : result.Lines()) {
+      if (!out.empty()) out += L"\n";
+      out += line.Text().c_str();
+    }
+    text = winrt::to_string(out);
   }
-  return winrt::to_string(out);
+  for (const auto& l : IndicLines(bitmap, !engine)) {
+    if (!text.empty()) text += "\n";
+    text += l;
+  }
+  return text;
 }
 
 bool EndsWithPdf(const std::string& path) {
@@ -626,7 +822,7 @@ EncodableList AnalyzeVideo(const std::string& path, double budget_seconds) {
                         std::chrono::milliseconds(static_cast<int64_t>(budget_seconds * 1000));
 
   EncodableList out;
-  if (!OcrEngineForThread()) return out;
+  if (!OcrEngineForThread() && !IndicReady()) return out;
   auto file = wst::StorageFile::GetFileFromPathAsync(winrt::to_hstring(path)).get();
   auto clip = winrt::Windows::Media::Editing::MediaClip::CreateFromFileAsync(file).get();
   const double duration = std::chrono::duration<double>(clip.OriginalDuration()).count();
@@ -705,11 +901,23 @@ void HandleOcr(const flutter::MethodCall<EncodableValue>& call, std::unique_ptr<
     RunInBackground([r]() {
       bool ok = false;
       try {
-        ok = OcrEngineForThread() != nullptr || Classifier::Instance().Available();
+        ok = OcrEngineForThread() != nullptr || IndicReady() || Classifier::Instance().Available();
       } catch (...) {
       }
       Reply([r, ok]() { r->Success(EncodableValue(ok)); });
     });
+    return;
+  }
+  if (method == "configureIndic") {
+    const std::string* bin = StringArg(call, "bin");
+    const std::string* tessdata = StringArg(call, "tessdata");
+    const std::string* languages = StringArg(call, "languages");
+    if (!bin || !tessdata || !languages) {
+      result->Error("bad_args", "bin, tessdata, languages required");
+      return;
+    }
+    ConfigureIndic(*bin, *tessdata, *languages);
+    result->Success();
     return;
   }
   if (method == "info") {
@@ -768,7 +976,7 @@ void HandleVideo(const flutter::MethodCall<EncodableValue>& call, std::unique_pt
     RunInBackground([r]() {
       bool ok = false;
       try {
-        ok = OcrEngineForThread() != nullptr;
+        ok = OcrEngineForThread() != nullptr || IndicReady();
       } catch (...) {
       }
       Reply([r, ok]() { r->Success(EncodableValue(ok)); });

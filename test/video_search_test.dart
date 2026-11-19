@@ -121,12 +121,12 @@ void main() {
     expect(store.files.values.where((f) => f.isPending), isEmpty);
   });
 
-  test('videos over 15 MB are found by name only, never analysed', () async {
+  test('videos over 50 MB are found by name only, never analysed', () async {
     final dir = await Directory.systemTemp.createTemp('big_video');
     addTearDown(() => dir.delete(recursive: true));
     final small = File('${dir.path}/clip.mp4')..writeAsBytesSync([0, 0, 0, 1]);
     final big = File('${dir.path}/movie.mp4');
-    final raf = big.openSync(mode: FileMode.write)..setPositionSync((15 << 20) + 1)..writeByteSync(0);
+    final raf = big.openSync(mode: FileMode.write)..setPositionSync((50 << 20) + 1)..writeByteSync(0);
     raf.closeSync();
     final analysed = <String>[];
     final store = IndexStore();

@@ -238,7 +238,7 @@ class SearchEngine {
     final toks = rawWords(q).toList();
     // Typed words must appear in this order. Between them the text may have spaces,
     // line breaks, any punctuation – or nothing ("100years" in PDFs). Case is ignored.
-    final pattern = toks.isEmpty ? RegExp.escape(q) : toks.map(RegExp.escape).join(r'[^\p{L}\p{N}]*');
+    final pattern = toks.isEmpty ? RegExp.escape(q) : toks.map(RegExp.escape).join(r'[^\p{L}\p{M}\p{N}]*');
     final re = RegExp(pattern, caseSensitive: false, unicode: true);
     final objWords = objectQueryWords(toks);
     final objKeys = [for (final w in objWords) objectKeys(w)];

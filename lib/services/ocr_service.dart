@@ -4,6 +4,8 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 
 import '../core/imagenet_labels.dart';
 import '../core/indexed_file.dart';
@@ -34,7 +36,75 @@ abstract class OcrEngine {
 /// v4: close-ups of people/objects are classified too, and a calibrated 0.3 cut-off.
 /// Windows v5: built-in Windows OCR and the bundled object classifier.
 /// Windows v6: OCR falls back to any installed language; small pictures are enlarged.
-final int kOcrVersion = Platform.isWindows ? 6 : 4;
+/// v5 (Windows v7): Hindi and Tamil text is read too (Tesseract with bundled models).
+final int kOcrVersion = Platform.isWindows ? 7 : 5;
+
+/// Hindi and Tamil text. Neither Apple Vision nor Windows OCR reads these scripts, so
+/// Tesseract reads every picture, scanned page and video frame as well, with the models
+/// bundled in the app. The native side keeps only lines with confidently read Hindi or
+/// Tamil words – the OS engine already has the English.
+class IndicText {
+  IndicText._();
+
+  /// Off for now: a second reader on every picture and video frame made indexing too
+  /// slow. To turn it back on: set this to true, list `assets/tessdata/` under `assets`
+  /// in pubspec.yaml again, and bump kOcrVersion and kContentVersion so pictures,
+  /// scanned PDFs and videos are read again. The native readers (macOS and Windows) stay
+  /// idle until [configureNative] hands them Tesseract, so nothing else changes.
+  static const enabled = false;
+
+  /// Tesseract language codes, in the order they are tried.
+  static const languages = 'hin+tam';
+
+  static Future<({String bin, String tessdata})?>? _ready;
+
+  /// Tesseract and the unpacked models, or null when Tesseract isn't installed.
+  static Future<({String bin, String tessdata})?> ready() => _ready ??= () async {
+        if (!enabled) return null;
+        final bin = await TesseractOcrEngine.findBinary();
+        if (bin == null) return null;
+        final dir = await _unpackModels();
+        return dir == null ? null : (bin: bin, tessdata: dir);
+      }();
+
+  static Future<bool>? _configured;
+
+  /// Tells the native engine (macOS / Windows) where Tesseract and the models are.
+  /// Images and videos share this setting. False when Hindi and Tamil can't be read.
+  static Future<bool> configureNative() => _configured ??= () async {
+        final r = await ready();
+        if (r == null) return false;
+        try {
+          await const MethodChannel('smart_file_search/ocr').invokeMethod<void>(
+              'configureIndic', {'bin': r.bin, 'tessdata': r.tessdata, 'languages': languages});
+          return true;
+        } catch (_) {
+          return false;
+        }
+      }();
+
+  static const _models = ['eng', 'hin', 'tam'];
+
+  /// Tesseract reads models from a folder on disk, not from inside the app: they are
+  /// copied out once (and again when an update ships different ones).
+  static Future<String?> _unpackModels() async {
+    try {
+      final dir = Directory(p.join((await getApplicationSupportDirectory()).path, 'tessdata'));
+      await dir.create(recursive: true);
+      for (final m in _models) {
+        final data = await rootBundle.load('assets/tessdata/$m.traineddata');
+        final f = File(p.join(dir.path, '$m.traineddata'));
+        if (await f.exists() && await f.length() == data.lengthInBytes) continue;
+        final tmp = File('${f.path}.part');
+        await tmp.writeAsBytes(data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes), flush: true);
+        await tmp.rename(f.path);
+      }
+      return dir.path;
+    } catch (_) {
+      return null;
+    }
+  }
+}
 
 OcrEngine createOcrEngine() {
   if (Platform.isAndroid || Platform.isIOS) return MlKitOcrEngine();
@@ -80,6 +150,7 @@ class NativeOcrEngine implements OcrEngine {
   @override
   Future<bool> isAvailable() async {
     if (_native == null) {
+      await IndicText.configureNative(); // first: Windows counts Hindi/Tamil as a reader
       try {
         _native = await _channel.invokeMethod<bool>('isAvailable') ?? false;
       } catch (_) {
@@ -150,11 +221,9 @@ class MlKitOcrEngine implements OcrEngine {
   Future<ImageReading> analyzeImage(String path) async => ImageReading(await recognize(path));
 }
 
-/// Desktop OCR through the free Tesseract CLI, if it is installed.
+/// Desktop OCR through the free Tesseract CLI, if it is installed. Reads English, and
+/// Hindi and Tamil too when [IndicText.enabled].
 class TesseractOcrEngine implements OcrEngine {
-  String? _bin;
-  bool? _available;
-
   @override
   bool get readsPdf => false;
   @override
@@ -162,31 +231,37 @@ class TesseractOcrEngine implements OcrEngine {
   @override
   int get parallelism => 2;
 
-  @override
-  Future<bool> isAvailable() async {
-    if (_available != null) return _available!;
-    final candidates = <String>[
-      'tesseract',
-      if (Platform.isWindows) r'C:\Program Files\Tesseract-OCR\tesseract.exe',
-      if (Platform.isMacOS) ...['/opt/homebrew/bin/tesseract', '/usr/local/bin/tesseract'],
-      if (Platform.isLinux) '/usr/bin/tesseract',
-    ];
-    for (final c in candidates) {
-      try {
-        final r = await Process.run(c, ['--version']).timeout(const Duration(seconds: 3));
-        if (r.exitCode == 0) {
-          _bin = c;
-          return _available = true;
+  static Future<String?>? _bin;
+
+  /// The Tesseract program, or null when it isn't installed.
+  static Future<String?> findBinary() => _bin ??= () async {
+        final candidates = <String>[
+          'tesseract',
+          if (Platform.isWindows) r'C:\Program Files\Tesseract-OCR\tesseract.exe',
+          if (Platform.isMacOS) ...['/opt/homebrew/bin/tesseract', '/usr/local/bin/tesseract'],
+          if (Platform.isLinux) '/usr/bin/tesseract',
+        ];
+        for (final c in candidates) {
+          try {
+            final r = await Process.run(c, ['--version']).timeout(const Duration(seconds: 3));
+            if (r.exitCode == 0) return c;
+          } catch (_) {}
         }
-      } catch (_) {}
-    }
-    return _available = false;
-  }
+        return null;
+      }();
+
+  @override
+  Future<bool> isAvailable() async => await findBinary() != null;
 
   @override
   Future<String> recognize(String path) async {
-    if (!await isAvailable()) return '';
-    final proc = await Process.start(_bin!, [path, 'stdout', '--psm', '3']);
+    final bin = await findBinary();
+    if (bin == null) return '';
+    final models = await IndicText.ready();
+    final proc = await Process.start(bin, [
+      path, 'stdout', '--psm', '3',
+      if (models != null) ...['-l', 'eng+${IndicText.languages}', '--tessdata-dir', models.tessdata],
+    ], environment: const {'OMP_THREAD_LIMIT': '1'});
     final out = proc.stdout.transform(utf8.decoder).join();
     unawaited(proc.stderr.drain<void>());
     final code = await proc.exitCode.timeout(const Duration(seconds: 15), onTimeout: () {

@@ -149,6 +149,7 @@ class _ReadingProgressCardState extends State<ReadingProgressCard> {
           'on-screen text${c.speechInVideos ? ' & speech' : ''}',
         ].join(' · '),
         elapsed: pr.elapsed,
+        timeLeft: pr.videoTimeLeft,
       );
     } else if (pr != null && pr.phase == IndexPhase.analysing && c.showReading) {
       final cur = pr.current;
@@ -165,6 +166,7 @@ class _ReadingProgressCardState extends State<ReadingProgressCard> {
             ? null
             : '${cat?.singular ?? 'file'}: ${p.basename(cur!)} · ${formatBytes(curFile.size)}',
         elapsed: pr.elapsed,
+        timeLeft: pr.timeLeft,
       );
     } else {
       child = const SizedBox(width: double.infinity);
@@ -187,6 +189,7 @@ class _ReadingProgressCardState extends State<ReadingProgressCard> {
     String? caption,
     String? detail,
     Duration? elapsed,
+    Duration? timeLeft,
   }) {
     final cs = Theme.of(context).colorScheme;
     final tt = Theme.of(context).textTheme;
@@ -253,9 +256,11 @@ class _ReadingProgressCardState extends State<ReadingProgressCard> {
                 overflow: TextOverflow.ellipsis,
               ),
             ),
-            if (elapsed != null) ...[
+            // Time left once it can be estimated; until then, time so far.
+            if (timeLeft != null || elapsed != null) ...[
               const SizedBox(width: 10),
-              Text(formatSeconds(elapsed), style: muted),
+              Text(timeLeft != null ? formatTimeLeft(timeLeft) : formatSeconds(elapsed!),
+                  style: timeLeft != null ? muted?.copyWith(color: cs.onSurface, fontWeight: FontWeight.w600) : muted),
             ],
           ]),
         ]),

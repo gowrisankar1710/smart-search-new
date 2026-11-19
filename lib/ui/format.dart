@@ -31,6 +31,18 @@ String formatSeconds(Duration d) {
   return '${d.inMinutes} min ${(d.inSeconds % 60).toString().padLeft(2, '0')} s';
 }
 
+/// "about 20 s left", "about 4 min left", "about 1 h 10 min left" – rounded, since it's
+/// an estimate.
+String formatTimeLeft(Duration d) {
+  final s = d.inSeconds;
+  if (s < 10) return 'a few seconds left';
+  if (s < 60) return 'about ${(s / 10).ceil() * 10} s left';
+  final m = (s / 60).ceil();
+  if (m < 60) return 'about $m min left';
+  final h = m ~/ 60, rest = (m % 60 / 5).round() * 5;
+  return rest == 0 || rest == 60 ? 'about ${rest == 60 ? h + 1 : h} h left' : 'about $h h $rest min left';
+}
+
 /// "12 ms" below a second, otherwise seconds.
 String formatMillis(Duration d) => d.inMilliseconds < 1000 ? '${d.inMilliseconds} ms' : formatSeconds(d);
 

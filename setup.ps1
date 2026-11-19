@@ -12,4 +12,4 @@ if (Test-Path $gradle) {
 }
 
 Write-Host "`nDone. Run with:  flutter run -d windows   (or pick an Android device)"
-Write-Host "Optional: install Tesseract OCR (https://github.com/UB-Mannheim/tesseract/wiki) to read text inside images on Windows."
+# Hindi and Tamil reading (Tesseract) is off for now – see IndicText.enabled in lib/services/ocr_service.dart.

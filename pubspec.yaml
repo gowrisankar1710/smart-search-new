@@ -27,3 +27,9 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  # Tesseract "fast" models (Apache-2.0, github.com/tesseract-ocr/tessdata_fast):
+  # Hindi and Tamil text in pictures, scanned PDFs and videos.
+  # Hindi and Tamil reading is off for now (IndicText.enabled in ocr_service.dart).
+  # Turning it back on: add this again under `flutter:`
+  #   assets:
+  #     - assets/tessdata/

@@ -45,9 +45,11 @@ BM25 on content, IDF-weighted name matches, prefix completion (`invo` → invoic
 |---|---|---|
 | **Android** | All of internal storage + SD card after **"All files access"** (`MANAGE_EXTERNAL_STORAGE`). If refused, photos and videos only (Android 13+). On Google Play, this permission needs a policy declaration; "file search" is an accepted use. | ML Kit, on-device |
 | **iOS** | Sandbox rules: the app's own folder (shown in Files › *On My iPhone › Smart Search*) plus folders the user picks with **Add folder** (Files, iCloud Drive). iOS grants access to a picked folder for the current session, so re-pick after relaunch, or copy files into the app folder. | ML Kit, on-device (iOS 15.5+) |
-| **Windows** | User folders, OneDrive, every drive letter (system folders skipped) | Install [Tesseract](https://github.com/UB-Mannheim/tesseract/wiki) |
-| **macOS** | Home folders, iCloud Drive, `/Volumes/*`. Sandbox is disabled for direct distribution (not the Mac App Store); macOS asks once per protected folder. | `brew install tesseract` |
+| **Windows** | User folders, OneDrive, every drive letter (system folders skipped) | Windows OCR, on-device |
+| **macOS** | Home folders, iCloud Drive, `/Volumes/*`. Sandbox is disabled for direct distribution (not the Mac App Store); macOS asks once per protected folder. | Apple Vision, on-device |
 | **Linux** | Home, `/media`, `/mnt` | `apt install tesseract-ocr` |
+
+**Hindi and Tamil: off for now.** Reading Hindi and Tamil text took a second reader (Tesseract) on every picture, scanned page and video frame, which made indexing too slow, so it is switched off. The code and the models (`assets/tessdata`, Apache-2.0 [tessdata_fast](https://github.com/tesseract-ocr/tessdata_fast)) are still in the repository; `IndicText.enabled` in `lib/services/ocr_service.dart` says how to turn it back on. Hindi and Tamil file names are still found.
 
 The iOS simulator build excludes arm64 because ML Kit has no arm64-simulator slice. Use a real device or a Rosetta simulator.
 

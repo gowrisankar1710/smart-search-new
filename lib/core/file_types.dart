@@ -61,7 +61,7 @@ bool isVideoCandidate(String ext) => _videoExt.contains(ext);
 
 /// Videos larger than this are found by name only – never opened or analysed.
 /// Reading a big video takes minutes of heavy work and made slower PCs freeze.
-const int kMaxVideoBytes = 15 << 20; // 15 MB
+const int kMaxVideoBytes = 50 << 20; // 50 MB
 
 /// A video small enough to read inside (see [kMaxVideoBytes]).
 bool isReadableVideo(String ext, int size) => isVideoCandidate(ext) && size <= kMaxVideoBytes;

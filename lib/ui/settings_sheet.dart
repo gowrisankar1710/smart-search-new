@@ -95,6 +95,26 @@ class _SettingsBody extends StatelessWidget {
               : c.ocr.name),
         ),
       ),
+      if (IndicText.enabled && (Platform.isMacOS || Platform.isWindows || Platform.isLinux))
+        FutureBuilder(
+          future: IndicText.ready(),
+          builder: (_, snap) {
+            if (snap.connectionState != ConnectionState.done) return const SizedBox.shrink();
+            final on = snap.data != null;
+            return ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(on ? Icons.translate_rounded : Icons.info_outline_rounded),
+              title: Text(on ? 'Reads Hindi and Tamil text' : 'Hindi and Tamil text: off'),
+              subtitle: Text(on
+                  ? 'In pictures, scanned PDFs and videos (Tesseract, on-device)'
+                  : Platform.isMacOS
+                      ? 'Install Tesseract to turn it on: brew install tesseract'
+                      : Platform.isWindows
+                          ? 'Install Tesseract (github.com/UB-Mannheim/tesseract/wiki) to turn it on'
+                          : 'Install Tesseract to turn it on: apt install tesseract-ocr'),
+            );
+          },
+        ),
       if (c.ocr case final NativeOcrEngine native when Platform.isWindows)
         FutureBuilder(
           future: native.windowsInfo(),

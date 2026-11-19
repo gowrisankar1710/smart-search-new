@@ -16,6 +16,7 @@ import 'services/indexer.dart';
 import 'services/locations.dart';
 import 'services/ocr_service.dart';
 import 'services/permissions.dart';
+import 'services/recent_searches.dart';
 import 'services/search_engine.dart';
 import 'services/video_service.dart';
 
@@ -82,6 +83,7 @@ class AppController extends ChangeNotifier {
   final VideoAnalyzer video = createVideoAnalyzer();
   late final Indexer indexer = Indexer(store, engine, ocr, video: video);
   late final FolderWatcher watcher = FolderWatcher(onChanges: _onDiskChanges);
+  final recent = RecentSearches();
 
   bool ready = false;
   List<ScanRoot> roots = const [];
@@ -106,6 +108,7 @@ class AppController extends ChangeNotifier {
   bool get needsOnboarding => !store.initialDone;
 
   Future<void> init() async {
+    unawaited(recent.load()); // tiny file, read alongside the index – never waited for
     await store.load();
     _upgradeOcr();
     _requeueSniffable();
@@ -171,7 +174,7 @@ class AppController extends ChangeNotifier {
     }
   }
 
-  /// Videos over 15 MB that an older version queued are found by name only now.
+  /// Videos over 50 MB that an older version queued are found by name only now.
   void _skipBigVideos() {
     for (final f in store.files.values) {
       if (f.status == IndexStatus.pending && isVideoCandidate(f.ext) && !isReadableVideo(f.ext, f.size)) {
@@ -187,7 +190,7 @@ class AppController extends ChangeNotifier {
     const reread = {'pdf', 'xlsx', 'xlsm', 'ods'};
     for (final f in store.files.values) {
       if (isVideoCandidate(f.ext)) {
-        if (!isReadableVideo(f.ext, f.size)) continue; // over 15 MB: by name only
+        if (!isReadableVideo(f.ext, f.size)) continue; // over 50 MB: by name only
         // v4: read what videos show and say. v5: again, with per-word speech timing.
         // Already-read text stays searchable until the new reading replaces it.
         if (f.status != IndexStatus.pending) f.status = IndexStatus.pending;
@@ -201,6 +204,14 @@ class AppController extends ChangeNotifier {
         f
           ..source = ContentSource.ocr
           ..status = IndexStatus.pending;
+      }
+    }
+    // Hindi and Tamil: scanned PDFs are read again (images follow kOcrVersion).
+    if (store.contentVersion < (Platform.isWindows ? 9 : 6)) {
+      for (final f in store.files.values) {
+        if (f.ext == 'pdf' && f.source == ContentSource.ocr && f.status == IndexStatus.indexed) {
+          f.status = IndexStatus.pending;
+        }
       }
     }
     store.contentVersion = kContentVersion;

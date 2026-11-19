@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import '../app_controller.dart';
 import '../services/locations.dart';
+import '../services/recent_searches.dart';
 import '../services/search_engine.dart';
 import 'detail_panel.dart';
 import 'capabilities_grid.dart';
@@ -51,6 +52,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     c.removeListener(_onController);
     _debounce?.cancel();
+    _remember?.cancel();
     _query.dispose();
     _focus.dispose();
     super.dispose();
@@ -66,7 +68,25 @@ class _HomeScreenState extends State<HomeScreen> {
   void _onChanged(String _) {
     setState(() {});
     _debounce?.cancel();
+    _remember?.cancel();
     _debounce = Timer(const Duration(milliseconds: 160), _search);
+  }
+
+  /// A search counts as made once the user presses Enter, picks a result, or stops
+  /// typing on a query that found something – not on every keystroke.
+  Timer? _remember;
+  void _rememberQuery() {
+    _remember?.cancel();
+    final q = _query.text.trim();
+    if (q.isNotEmpty) c.recent.add(q);
+  }
+
+  void _useRecent(String q) {
+    _query.value = TextEditingValue(text: q, selection: TextSelection.collapsed(offset: q.length));
+    setState(() {});
+    _search();
+    c.recent.add(q);
+    _focus.requestFocus();
   }
 
   int _gen = 0; // bumps on every new query; older runs see it and stop
@@ -95,9 +115,16 @@ class _HomeScreenState extends State<HomeScreen> {
     show(r);
     setState(() => _searching = false);
     if (_query.text.trim().isNotEmpty) c.searchFinished(r.took);
+    if (r.hits.isNotEmpty) {
+      _remember?.cancel();
+      _remember = Timer(const Duration(seconds: 2), () {
+        if (mounted && gen == _gen) _rememberQuery();
+      });
+    }
   }
 
   void _clear() {
+    _remember?.cancel();
     _query.clear();
     _gen++;
     setState(() {
@@ -180,6 +207,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 focus: _focus,
                 onChanged: _onChanged,
                 onSubmitted: () {
+                  _rememberQuery();
                   if (_result.hits.isNotEmpty) openHit(context, _result.hits.first);
                 },
                 onClear: _clear,
@@ -196,7 +224,12 @@ class _HomeScreenState extends State<HomeScreen> {
             if (hasQuery) _ResultSummary(result: _result, query: _query.text.trim(), searching: _searching),
             Expanded(
               child: !hasQuery
-                  ? SingleChildScrollView(child: CapabilitiesGrid(controller: c))
+                  ? SingleChildScrollView(
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                        _RecentSearches(recent: c.recent, onUse: _useRecent),
+                        CapabilitiesGrid(controller: c),
+                      ]),
+                    )
                   : _result.hits.isEmpty
                       ? (_searching
                           ? const Center(child: SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2)))
@@ -210,7 +243,12 @@ class _HomeScreenState extends State<HomeScreen> {
                               key: ValueKey(h.file.path),
                               hit: h,
                               selected: showDetails && h.file.path == _selected,
-                              onSelect: showDetails ? () => setState(() => _selected = h.file.path) : null,
+                              onSelect: showDetails
+                                  ? () {
+                                      _rememberQuery();
+                                      setState(() => _selected = h.file.path);
+                                    }
+                                  : null,
                             );
                           },
                         ),
@@ -475,7 +513,7 @@ class _StatusCard extends StatelessWidget {
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text('${formatCount(s.total)} files', style: tt.labelLarge?.copyWith(fontWeight: FontWeight.w600)),
             Text(
-              reading ? 'Reading · ${formatCount(controller.backgroundProgress?.remaining ?? s.pending)} left' : 'All read',
+              reading ? _readingLine(controller, s.pending) : 'All read',
               style: tt.labelSmall?.copyWith(color: cs.onSurfaceVariant),
             ),
           ]),
@@ -528,7 +566,7 @@ class _CompactHeader extends StatelessWidget {
         const SizedBox(width: 10),
         Text('Smart Search', style: tt.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
         const Spacer(),
-        Text(controller.showReading ? 'Reading · ${formatCount(controller.backgroundProgress?.remaining ?? s.pending)} left' : '${formatCount(s.total)} files',
+        Text(controller.showReading ? _readingLine(controller, s.pending) : '${formatCount(s.total)} files',
             style: tt.labelMedium?.copyWith(color: cs.onSurfaceVariant)),
         IconButton(
           tooltip: 'Settings',
@@ -803,4 +841,70 @@ class _NoResults extends StatelessWidget {
       ),
     );
   }
+}
+
+// ------------------------------------------------------------------ recent searches
+
+/// The last searches, newest first: tap one to search it again, × to forget it.
+/// Hidden until there is one.
+class _RecentSearches extends StatelessWidget {
+  const _RecentSearches({required this.recent, required this.onUse});
+  final RecentSearches recent;
+  final ValueChanged<String> onUse;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return ListenableBuilder(
+      listenable: recent,
+      builder: (context, _) {
+        final items = recent.items;
+        if (items.isEmpty) return const SizedBox.shrink();
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(24, 22, 24, 0),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              Padding(
+                padding: const EdgeInsets.only(left: 2),
+                child: Text('RECENT SEARCHES',
+                    style: TextStyle(
+                        fontSize: 11, letterSpacing: 0.8, fontWeight: FontWeight.w700, color: cs.onSurfaceVariant)),
+              ),
+              const Spacer(),
+              TextButton(
+                onPressed: recent.clear,
+                style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+                child: const Text('Clear'),
+              ),
+            ]),
+            const SizedBox(height: 4),
+            Wrap(spacing: 8, runSpacing: 8, children: [
+              for (final q in items)
+                InputChip(
+                  avatar: Icon(Icons.history_rounded, size: 16, color: cs.onSurfaceVariant),
+                  label: Text(q, overflow: TextOverflow.ellipsis),
+                  tooltip: 'Search “$q” again',
+                  onPressed: () => onUse(q),
+                  onDeleted: () => recent.remove(q),
+                  deleteButtonTooltipMessage: 'Remove from recent searches',
+                  deleteIcon: const Icon(Icons.close_rounded, size: 16),
+                  backgroundColor: Colors.white,
+                  side: BorderSide(color: cs.outlineVariant),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+            ]),
+          ]),
+        );
+      },
+    );
+  }
+}
+
+/// "Reading · 1,240 left", then "Reading · 1,240 files · about 4 min left" once the time
+/// can be estimated.
+String _readingLine(AppController c, int pending) {
+  final p = c.backgroundProgress;
+  final n = formatCount(p?.remaining ?? pending);
+  final left = p?.video != null ? null : p?.timeLeft;
+  return left == null ? 'Reading · $n left' : 'Reading · $n files · ${formatTimeLeft(left)}';
 }

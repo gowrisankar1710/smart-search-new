@@ -7,7 +7,10 @@ import 'dart:math';
 /// Text kept per file. Large enough for long documents; anything beyond can't be searched.
 const int kMaxIndexedChars = 200000;
 
-final _splitter = RegExp(r'[^\p{L}\p{N}]+', unicode: true);
+// Marks (\p{M}) belong to the word: Hindi and Tamil vowel signs and viramas are marks,
+// so "हिंदी" and "தமிழ்" stay one word. Zero-width (non-)joiners are dropped first.
+final _splitter = RegExp(r'[^\p{L}\p{M}\p{N}]+', unicode: true);
+final _joiners = RegExp('[\u200C\u200D]');
 final _camel = RegExp(r'(?<=\p{Ll})(?=\p{Lu})|(?<=\p{L})(?=\p{N})|(?<=\p{N})(?=\p{L})', unicode: true);
 final _ctrl = RegExp(r'[\u0000-\u0008\u000B\u000C\u000E-\u001F�]');
 final _spaces = RegExp(r'[ \t\r\f\v ]+');
@@ -41,7 +44,8 @@ String stem(String w) {
   return w;
 }
 
-Iterable<String> rawWords(String text) => text.split(_splitter).where((w) => w.isNotEmpty);
+Iterable<String> rawWords(String text) =>
+    text.replaceAll(_joiners, '').split(_splitter).where((w) => w.isNotEmpty);
 
 /// Tokens for a file or folder name. Splits camelCase and letter/digit
 /// boundaries ("InvoiceMarch2024" → invoice, march, 2024) and keeps the compound.

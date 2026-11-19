@@ -9,7 +9,8 @@
 // bundled MobileNetV2 model through Windows ML.
 //
 // Channels (same as macOS):
-//   smart_file_search/ocr    isAvailable · recognize(path) · analyzeImage(path)
+//   smart_file_search/ocr    isAvailable · recognize(path) · analyzeImage(path) ·
+//                            configureIndic(bin, tessdata, languages) – Hindi/Tamil via Tesseract
 //   smart_file_search/video  isAvailable · analyze(path, budgetSeconds) · cancel
 namespace native_analysis {
 

@@ -152,5 +152,5 @@ String extensionOf(String path) {
   return e.length <= 1 ? '' : e.substring(1).toLowerCase();
 }
 
-final _nonAlnum = RegExp(r'[^\p{L}\p{N}]+', unicode: true);
+final _nonAlnum = RegExp(r'[^\p{L}\p{M}\p{N}]+', unicode: true);
 String compact(String s) => s.toLowerCase().replaceAll(_nonAlnum, '');

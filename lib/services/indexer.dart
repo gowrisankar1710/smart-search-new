@@ -35,6 +35,8 @@ class IndexProgress {
     this.videoFraction = 0,
     this.videoNumber = 0,
     this.videoCount = 0,
+    this.timeLeft,
+    this.videoTimeLeft,
   });
   final IndexPhase phase;
   final int found;
@@ -56,6 +58,13 @@ class IndexProgress {
   final double videoFraction;
   final int videoNumber;
   final int videoCount;
+
+  /// About how long until every file except videos is read, from how fast files were
+  /// read over the last half minute. Null until there's enough to go on.
+  final Duration? timeLeft;
+
+  /// About how long until the video being read now is done. Null early on.
+  final Duration? videoTimeLeft;
 
   /// Share of this run's files read so far, 0–1.
   double get fraction {
@@ -99,6 +108,9 @@ class IndexSummary {
 ///     in unbudgeted background runs, one at a time, recent & small first.
 ///  6. A quick pass (the Timer screen) reads only files up to [quickReadBytes]; bigger
 ///     ones stay queued and the background run after it reads them, smallest first.
+/// How far back the reading pace is measured for the time left.
+const _rateWindow = Duration(seconds: 30);
+
 class Indexer {
   Indexer(this.store, this.engine, this.ocr, {VideoAnalyzer? video})
       : video = video ?? SubtitleVideoAnalyzer();
@@ -201,6 +213,13 @@ class Indexer {
     var videoFraction = 0.0;
     var videoNumber = 0;
     var videoCount = 0;
+    final videoClock = Stopwatch();
+    var videosDone = 0;
+    var videosLeft = 0;
+    // (ms since reading started, files read) over the last [_rateWindow]: the time left
+    // follows the current pace – small text files go fast, pictures and big PDFs slower.
+    final paceSamples = <(int, int)>[];
+    double? etaSecs;
     // Quick pass: files too big to hold Search back for. They stay pending for later.
     final deferred = <IndexedFile>{};
     bool tooBig(IndexedFile f, {bool ocr = false}) =>
@@ -214,6 +233,29 @@ class Indexer {
       if (!force && now.difference(lastEmit).inMilliseconds < 120) return;
       lastEmit = now;
       final secs = analysisClock.elapsedMilliseconds / 1000;
+      Duration? timeLeft, videoTimeLeft;
+      if (phase == IndexPhase.analysing) {
+        final ms = analysisClock.elapsedMilliseconds;
+        final done = analysed - videosDone;
+        final rest = max(0, pending - videosLeft);
+        paceSamples.add((ms, done));
+        while (paceSamples.length > 2 && ms - paceSamples.first.$1 > _rateWindow.inMilliseconds) {
+          paceSamples.removeAt(0);
+        }
+        final (t0, n0) = paceSamples.first;
+        if (rest == 0) {
+          etaSecs = 0;
+        } else if (ms >= 4000 && ms - t0 >= 2000 && done > n0) {
+          final est = rest / ((done - n0) / ((ms - t0) / 1000));
+          // Smoothed, so one slow file doesn't make it jump.
+          etaSecs = etaSecs == null ? est : etaSecs! * 0.85 + est * 0.15;
+        }
+        if (etaSecs != null) timeLeft = Duration(seconds: etaSecs!.round());
+        final v = videoClock.elapsedMilliseconds;
+        if (videoPath != null && videoFraction > 0.03 && v > 3000) {
+          videoTimeLeft = Duration(milliseconds: (v * (1 - videoFraction) / videoFraction).round());
+        }
+      }
       onProgress(IndexProgress(
         phase: phase,
         found: found,
@@ -230,6 +272,8 @@ class Indexer {
         videoFraction: videoFraction,
         videoNumber: videoNumber,
         videoCount: videoCount,
+        timeLeft: timeLeft,
+        videoTimeLeft: videoTimeLeft,
       ));
     }
 
@@ -513,6 +557,7 @@ class Indexer {
             ? (store.files.values.where((f) => f.needsVideo).toList()..sort(bySize))
             : <IndexedFile>[];
         if (!readVideos) pending -= store.files.values.where((f) => f.needsVideo).length;
+        videosLeft = videoQ.length;
         var vi = 0;
         var videoLanes = 0;
         late final Future<void> Function() videoLoop;
@@ -533,10 +578,16 @@ class Indexer {
               continue;
             }
             final f = videoQ[vi++];
-            if (f.status != IndexStatus.pending) continue;
+            if (f.status != IndexStatus.pending) {
+              videosLeft--;
+              continue;
+            }
             current = f.path;
             videoPath = f.path;
             videoFraction = 0;
+            videoClock
+              ..reset()
+              ..start();
             videoNumber++;
             videoCount = videoNumber + videoQ.skip(vi).where((v) => v.status == IndexStatus.pending).length;
             emit(force: true);
@@ -563,6 +614,8 @@ class Indexer {
             }
             analysed++;
             pending--;
+            videosDone++;
+            videosLeft--;
             bytesDone += f.size;
             emit();
           }
