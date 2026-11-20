@@ -8,9 +8,10 @@ import '../services/permissions.dart';
 import 'analysis_view.dart';
 import 'settings_sheet.dart';
 import 'format.dart';
+import 'theme.dart';
 
-const _indigo = Color(0xFF4F5BFF);
-const _violet = Color(0xFF9B5CFF);
+const _brand = Brand.blue;
+const _accent = Brand.teal;
 
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({super.key, required this.controller});
@@ -82,7 +83,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                         constraints: BoxConstraints(maxWidth: wide ? 1040 : 520),
                         child: wide
                             ? Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-                                Expanded(child: Padding(padding: const EdgeInsets.only(right: 56), child: hero)),
+                                const Expanded(child: Padding(padding: EdgeInsets.only(right: 56), child: hero)),
                                 SizedBox(width: 440, child: card),
                               ])
                             : Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -111,16 +112,7 @@ class _Hero extends StatelessWidget {
     final tt = Theme.of(context).textTheme;
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Row(children: [
-        Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(colors: [_indigo, _violet], begin: Alignment.topLeft, end: Alignment.bottomRight),
-            borderRadius: BorderRadius.circular(12),
-            boxShadow: [BoxShadow(color: _indigo.withValues(alpha: 0.3), blurRadius: 14, offset: const Offset(0, 6))],
-          ),
-          child: const Icon(Icons.search_rounded, color: Colors.white, size: 22),
-        ),
+        const BrandMark(size: 40),
         const SizedBox(width: 12),
         Text('Smart Search', style: tt.titleMedium?.copyWith(fontWeight: FontWeight.w700, letterSpacing: -0.2)),
       ]),
@@ -132,7 +124,7 @@ class _Hero extends StatelessWidget {
             alignment: PlaceholderAlignment.baseline,
             baseline: TextBaseline.alphabetic,
             child: ShaderMask(
-              shaderCallback: (r) => const LinearGradient(colors: [_indigo, _violet]).createShader(r),
+              shaderCallback: (r) => const LinearGradient(colors: [_brand, _accent]).createShader(r),
               child: Text(
                 'what\'s inside it',
                 style: tt.displaySmall?.copyWith(
@@ -181,7 +173,7 @@ class _Feature extends StatelessWidget {
             borderRadius: BorderRadius.circular(12),
             border: Border.all(color: cs.outlineVariant),
           ),
-          child: Icon(icon, size: 20, color: _indigo),
+          child: Icon(icon, size: 20, color: _brand),
         ),
         const SizedBox(width: 14),
         Expanded(
@@ -215,7 +207,7 @@ class _StartCard extends StatelessWidget {
         color: Colors.white,
         borderRadius: BorderRadius.circular(24),
         border: Border.all(color: cs.outlineVariant),
-        boxShadow: [BoxShadow(color: _indigo.withValues(alpha: 0.08), blurRadius: 40, offset: const Offset(0, 16))],
+        boxShadow: [BoxShadow(color: _brand.withValues(alpha: 0.08), blurRadius: 40, offset: const Offset(0, 16))],
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         Row(children: [
@@ -226,7 +218,7 @@ class _StartCard extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
             decoration: BoxDecoration(color: cs.primaryContainer, borderRadius: BorderRadius.circular(20)),
             child: Text('${roots.length}',
-                style: tt.labelMedium?.copyWith(color: _indigo, fontWeight: FontWeight.w700)),
+                style: tt.labelMedium?.copyWith(color: _brand, fontWeight: FontWeight.w700)),
           ),
         ]),
         const SizedBox(height: 4),
@@ -320,8 +312,8 @@ class _RootRow extends StatelessWidget {
         Container(
           width: 30,
           height: 30,
-          decoration: BoxDecoration(color: _indigo.withValues(alpha: 0.08), borderRadius: BorderRadius.circular(8)),
-          child: Icon(_icon(root), size: 17, color: _indigo),
+          decoration: BoxDecoration(color: _brand.withValues(alpha: 0.08), borderRadius: BorderRadius.circular(8)),
+          child: Icon(_icon(root), size: 17, color: _brand),
         ),
         const SizedBox(width: 10),
         Expanded(
@@ -333,7 +325,7 @@ class _RootRow extends StatelessWidget {
                 style: tt.labelSmall?.copyWith(color: cs.onSurfaceVariant)),
           ]),
         ),
-        const Icon(Icons.check_circle_rounded, size: 18, color: Color(0xFF22B573)),
+        const Icon(Icons.check_circle_rounded, size: 18, color: Brand.teal),
       ]),
     );
   }
@@ -349,9 +341,9 @@ class _GradientButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        gradient: const LinearGradient(colors: [_indigo, _violet]),
+        gradient: const LinearGradient(colors: [_brand, _accent]),
         borderRadius: BorderRadius.circular(14),
-        boxShadow: [BoxShadow(color: _indigo.withValues(alpha: 0.32), blurRadius: 18, offset: const Offset(0, 8))],
+        boxShadow: [BoxShadow(color: _brand.withValues(alpha: 0.32), blurRadius: 18, offset: const Offset(0, 8))],
       ),
       child: Material(
         color: Colors.transparent,
@@ -383,13 +375,7 @@ class _Backdrop extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DecoratedBox(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Color(0xFFF1F2FF), Color(0xFFF7F8FA), Color(0xFFF6F0FF)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-      ),
+      decoration: const BoxDecoration(gradient: Brand.wash),
       child: SizedBox.expand(child: child),
     );
   }

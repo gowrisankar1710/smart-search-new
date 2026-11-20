@@ -11,6 +11,7 @@ import '../services/search_engine.dart';
 import '../services/video_service.dart';
 import 'format.dart';
 import 'result_tile.dart';
+import 'theme.dart';
 
 /// video_player plays files on these platforms; elsewhere the system player is used,
 /// which can't be told where to start.
@@ -270,7 +271,7 @@ class _VideoPlayerViewState extends State<VideoPlayerView> {
   Widget _momentList(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final tt = Theme.of(context).textTheme;
-    final hiStyle = TextStyle(backgroundColor: const Color(0xFFFFE58A), color: cs.onSurface, fontWeight: FontWeight.w600);
+    final hiStyle = TextStyle(backgroundColor: Brand.highlight, color: cs.onSurface, fontWeight: FontWeight.w600);
     final moments = widget.hit.moments;
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 4, 20, 16),

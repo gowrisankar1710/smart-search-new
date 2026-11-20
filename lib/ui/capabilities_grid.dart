@@ -4,7 +4,7 @@ import '../app_controller.dart';
 import 'format.dart';
 import 'theme.dart';
 
-const _green = Color(0xFF22B573);
+const _green = Brand.teal;
 
 enum _State { ready, indexing, queued, paused, off }
 

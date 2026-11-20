@@ -487,7 +487,7 @@ class _NewBadge extends StatelessWidget {
   final List<RecentAdd> fresh;
   final bool Function(String path)? isRead;
 
-  static const _green = Color(0xFF22B573);
+  static const _green = Brand.teal;
 
   @override
   Widget build(BuildContext context) {
@@ -544,7 +544,7 @@ class _StatusCard extends StatelessWidget {
           Container(
             width: 9,
             height: 9,
-            decoration: const BoxDecoration(color: Color(0xFF34C759), shape: BoxShape.circle),
+            decoration: const BoxDecoration(color: Brand.teal, shape: BoxShape.circle),
           ),
         const SizedBox(width: 10),
         Expanded(
@@ -575,11 +575,7 @@ class _Logo extends StatelessWidget {
       width: 30,
       height: 30,
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF4F5BFF), Color(0xFF9B5CFF)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
+        gradient: Brand.gradient,
         borderRadius: BorderRadius.circular(9),
       ),
       child: const Icon(Icons.search_rounded, color: Colors.white, size: 18),
@@ -643,7 +639,7 @@ class _SearchField extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(14),
-        boxShadow: [BoxShadow(color: const Color(0xFF4F5BFF).withValues(alpha: 0.06), blurRadius: 18, offset: const Offset(0, 6))],
+        boxShadow: [BoxShadow(color: Brand.blue.withValues(alpha: 0.06), blurRadius: 18, offset: const Offset(0, 6))],
       ),
       child: TextField(
         controller: controller,
@@ -819,7 +815,7 @@ class _ResultSummary extends StatelessWidget {
         if (searching)
           SizedBox(width: 13, height: 13, child: CircularProgressIndicator(strokeWidth: 1.6, color: cs.primary))
         else
-          const Icon(Icons.check_circle_rounded, size: 15, color: Color(0xFF34C759)),
+          const Icon(Icons.check_circle_rounded, size: 15, color: Brand.teal),
         const SizedBox(width: 6),
         Expanded(
           child: Text.rich(

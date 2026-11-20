@@ -40,7 +40,7 @@ class _ResultTileState extends State<ResultTile> {
     final f = hit.file;
     final sel = widget.selected;
     final hiStyle = TextStyle(
-      backgroundColor: const Color(0xFFFFE58A),
+      backgroundColor: Brand.highlight,
       color: cs.onSurface,
       fontWeight: FontWeight.w600,
     );

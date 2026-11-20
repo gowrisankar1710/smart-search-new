@@ -7,8 +7,9 @@ import '../app_controller.dart';
 import '../core/file_types.dart';
 import '../services/indexer.dart';
 import 'format.dart';
+import 'theme.dart';
 
-const _green = Color(0xFF22B573);
+const _green = Brand.teal;
 
 /// Under the search field: names files just added, e.g. "New image added: beach.jpg ·
 /// reading…" → "· searchable". Nothing is shown otherwise.

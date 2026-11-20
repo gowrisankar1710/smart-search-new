@@ -2,24 +2,83 @@ import 'package:flutter/material.dart';
 
 import '../core/file_types.dart';
 
-/// Light, airy palette: off-white canvas, white panels, soft borders, indigo accent.
+/// App colours: sky blue and teal on white.
+abstract final class Brand {
+  /// Light sky blue.
+  static const sky = Color(0xFF3EC1EA);
+
+  /// Main accent: a touch deeper than the logo so white text and thin icons read well.
+  static const blue = Color(0xFF169FD6);
+
+  /// Text and icons on pale brand backgrounds.
+  static const deep = Color(0xFF0B6E99);
+
+  /// Bottom of the "V".
+  static const teal = Color(0xFF2CC4A6);
+
+  /// Pale tints for selected rows, badges and panels.
+  static const tint = Color(0xFFE7F7FD);
+  static const tintTeal = Color(0xFFE5F8F4);
+
+  /// Matched words in names and snippets.
+  static const highlight = Color(0xFFC6EEFA);
+
+  static const gradient = LinearGradient(
+    colors: [sky, teal],
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+  );
+
+  /// Very light wash behind full-screen pages (onboarding, analysis).
+  static const wash = LinearGradient(
+    colors: [Color(0xFFEFF9FD), Colors.white, Color(0xFFEEFAF7)],
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+  );
+}
+
+/// The app mark: a rounded blue-to-teal tile with a search glyph.
+class BrandMark extends StatelessWidget {
+  const BrandMark({super.key, this.size = 32});
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        gradient: Brand.gradient,
+        borderRadius: BorderRadius.circular(size * 0.3),
+        boxShadow: [BoxShadow(color: Brand.blue.withValues(alpha: 0.28), blurRadius: size * 0.35, offset: Offset(0, size * 0.15))],
+      ),
+      child: Icon(Icons.search_rounded, color: Colors.white, size: size * 0.58),
+    );
+  }
+}
+
+/// White canvas, white panels, soft blue-grey borders, sky-blue accent.
 ThemeData buildTheme(Brightness brightness) {
-  final base = ColorScheme.fromSeed(seedColor: const Color(0xFF4F5BFF), brightness: Brightness.light);
+  final base = ColorScheme.fromSeed(seedColor: Brand.blue, brightness: Brightness.light);
   final scheme = base.copyWith(
-    primary: const Color(0xFF4F5BFF),
+    primary: Brand.blue,
     onPrimary: Colors.white,
-    primaryContainer: const Color(0xFFEEF0FF),
-    onPrimaryContainer: const Color(0xFF2B34B8),
-    surface: const Color(0xFFF7F8FA),
-    onSurface: const Color(0xFF1B1D24),
-    onSurfaceVariant: const Color(0xFF6B7080),
+    primaryContainer: Brand.tint,
+    onPrimaryContainer: Brand.deep,
+    secondary: Brand.teal,
+    onSecondary: Colors.white,
+    secondaryContainer: Brand.tintTeal,
+    onSecondaryContainer: const Color(0xFF0D6B5A),
+    surface: Colors.white,
+    onSurface: const Color(0xFF16222B),
+    onSurfaceVariant: const Color(0xFF627180),
     surfaceContainerLowest: Colors.white,
-    surfaceContainerLow: const Color(0xFFF2F3F6),
-    surfaceContainer: const Color(0xFFECEEF2),
-    surfaceContainerHigh: const Color(0xFFE6E8ED),
-    surfaceContainerHighest: const Color(0xFFDFE2E8),
-    outline: const Color(0xFFCDD1DA),
-    outlineVariant: const Color(0xFFE6E8EE),
+    surfaceContainerLow: const Color(0xFFF6FAFC),
+    surfaceContainer: const Color(0xFFEEF4F7),
+    surfaceContainerHigh: const Color(0xFFE6EEF2),
+    surfaceContainerHighest: const Color(0xFFDDE7EC),
+    outline: const Color(0xFFC9D6DE),
+    outlineVariant: const Color(0xFFE3EBF0),
   );
   final text = ThemeData(brightness: Brightness.light).textTheme.apply(
         bodyColor: scheme.onSurface,
@@ -29,31 +88,43 @@ ThemeData buildTheme(Brightness brightness) {
     useMaterial3: true,
     brightness: Brightness.light,
     colorScheme: scheme,
-    scaffoldBackgroundColor: scheme.surface,
+    scaffoldBackgroundColor: Colors.white,
     visualDensity: VisualDensity.standard,
     textTheme: text,
+    textSelectionTheme: TextSelectionThemeData(
+      cursorColor: Brand.blue,
+      selectionColor: Brand.sky.withValues(alpha: 0.3),
+      selectionHandleColor: Brand.blue,
+    ),
     dividerTheme: DividerThemeData(color: scheme.outlineVariant, space: 1, thickness: 1),
     chipTheme: ChipThemeData(
       shape: const StadiumBorder(),
       side: BorderSide(color: scheme.outlineVariant),
       backgroundColor: Colors.white,
+      selectedColor: Brand.tint,
       labelStyle: text.labelMedium?.copyWith(fontWeight: FontWeight.w500),
+      secondaryLabelStyle: text.labelMedium?.copyWith(fontWeight: FontWeight.w700, color: Brand.deep),
       padding: const EdgeInsets.symmetric(horizontal: 4),
       showCheckmark: false,
     ),
+    progressIndicatorTheme: const ProgressIndicatorThemeData(color: Brand.blue, linearTrackColor: Brand.tint),
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
+        backgroundColor: Brand.blue,
+        foregroundColor: Colors.white,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       ),
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
+        foregroundColor: Brand.deep,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         side: BorderSide(color: scheme.outlineVariant),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
       ),
     ),
+    textButtonTheme: TextButtonThemeData(style: TextButton.styleFrom(foregroundColor: Brand.deep)),
     tooltipTheme: const TooltipThemeData(waitDuration: Duration(milliseconds: 500)),
     snackBarTheme: const SnackBarThemeData(behavior: SnackBarBehavior.floating),
   );

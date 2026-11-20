@@ -51,7 +51,7 @@ class _FileDetails extends StatelessWidget {
     final f = hit.file;
     final moment = hit.firstMoment;
     final excerpt = moment != null ? null : _excerpt(f, hit);
-    final hiStyle = TextStyle(backgroundColor: const Color(0xFFFFE58A), color: cs.onSurface, fontWeight: FontWeight.w600);
+    final hiStyle = TextStyle(backgroundColor: Brand.highlight, color: cs.onSurface, fontWeight: FontWeight.w600);
     final where = [
       if (hit.sources.contains(MatchSource.name)) 'File name',
       if (hit.sources.contains(MatchSource.content)) 'Text inside the file',
@@ -100,14 +100,14 @@ class _FileDetails extends StatelessWidget {
         ),
       ]),
       const SizedBox(height: 22),
-      _Section('Details'),
+      const _Section('Details'),
       _InfoRow('Kind', _kindName(f)),
       _InfoRow('Size', formatBytes(f.size)),
       _InfoRow('Modified', formatDate(f.modified)),
       if (where.isNotEmpty) _InfoRow('Matched in', where.join(', ')),
       if (f.labels.isNotEmpty) ...[
         const SizedBox(height: 18),
-        _Section('Seen in this picture'),
+        const _Section('Seen in this picture'),
         Wrap(spacing: 6, runSpacing: 6, children: [
           for (final l in f.labels)
             Tooltip(
@@ -115,7 +115,7 @@ class _FileDetails extends StatelessWidget {
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
                 decoration: BoxDecoration(
-                  color: hit.objects.any((o) => o.id == l.id) ? const Color(0xFFFFE58A) : cs.surfaceContainerLow,
+                  color: hit.objects.any((o) => o.id == l.id) ? Brand.highlight : cs.surfaceContainerLow,
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: Text(labelName(l.id),
@@ -257,12 +257,12 @@ class _Overview extends StatelessWidget {
     final reading = controller.showReading;
     final pct = s.total == 0 || !reading ? 1.0 : s.read / s.total;
     return ListView(padding: const EdgeInsets.all(20), children: [
-      _Section('Your index'),
+      const _Section('Your index'),
       Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
           gradient: const LinearGradient(
-            colors: [Color(0xFFEEF0FF), Color(0xFFF6EEFF)],
+            colors: [Brand.tint, Brand.tintTeal],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
@@ -289,7 +289,7 @@ class _Overview extends StatelessWidget {
         ]),
       ),
       const SizedBox(height: 22),
-      _Section('Tips'),
+      const _Section('Tips'),
       const _Tip(Icons.format_quote_rounded, 'Type words exactly as they appear – files containing them are listed first.'),
       const _Tip(Icons.image_search_rounded, 'Text inside screenshots and photos is searchable too.'),
       const _Tip(Icons.center_focus_strong_rounded,

@@ -6,10 +6,11 @@ import 'package:flutter/material.dart';
 import '../app_controller.dart';
 import '../services/indexer.dart';
 import 'format.dart';
+import 'theme.dart';
 
-const _indigo = Color(0xFF4F5BFF);
-const _violet = Color(0xFF9B5CFF);
-const _green = Color(0xFF22B573);
+const _brand = Brand.blue;
+const _accent = Brand.teal;
+const _green = Brand.teal;
 
 /// Live view of a time-boxed analysis: countdown ring, step tracker, live counters, summary.
 class AnalysisView extends StatefulWidget {
@@ -234,7 +235,7 @@ class _RingPainter extends CustomPainter {
       rect.center,
       arcRect.width / 2,
       Paint()
-        ..color = _indigo.withValues(alpha: 0.06)
+        ..color = _brand.withValues(alpha: 0.06)
         ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 18),
     );
     canvas.drawArc(
@@ -258,18 +259,18 @@ class _RingPainter extends CustomPainter {
         ..style = PaintingStyle.stroke
         ..strokeWidth = stroke
         ..strokeCap = StrokeCap.round
-        ..shader = SweepGradient(
+        ..shader = const SweepGradient(
           startAngle: 0,
           endAngle: math.pi * 2,
-          colors: const [_indigo, _violet, _indigo],
-          transform: const GradientRotation(-math.pi / 2),
+          colors: [_brand, _accent, _brand],
+          transform: GradientRotation(-math.pi / 2),
         ).createShader(arcRect),
     );
     // knob at the end of the arc
     final a = -math.pi / 2 + sweep;
     final knob = arcRect.center + Offset(math.cos(a), math.sin(a)) * (arcRect.width / 2);
     canvas.drawCircle(knob, stroke / 2 + 3, Paint()..color = Colors.white);
-    canvas.drawCircle(knob, stroke / 2 - 1, Paint()..color = _violet);
+    canvas.drawCircle(knob, stroke / 2 - 1, Paint()..color = _accent);
   }
 
   @override
@@ -294,7 +295,7 @@ class _Steps extends StatelessWidget {
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(2),
               gradient: i <= active
-                  ? const LinearGradient(colors: [_indigo, _violet])
+                  ? const LinearGradient(colors: [_brand, _accent])
                   : null,
               color: i <= active ? null : Theme.of(context).colorScheme.outlineVariant,
             ),
@@ -329,10 +330,10 @@ class _StepDot extends StatelessWidget {
           padding: const EdgeInsets.all(6),
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: _indigo.withValues(alpha: 0.12),
-            border: Border.all(color: _indigo, width: 1.5),
+            color: _brand.withValues(alpha: 0.12),
+            border: Border.all(color: _brand, width: 1.5),
           ),
-          child: const CircularProgressIndicator(strokeWidth: 2, color: _indigo),
+          child: const CircularProgressIndicator(strokeWidth: 2, color: _brand),
         ),
       _ => Container(
           width: 26,
@@ -381,7 +382,7 @@ class _Stat extends StatelessWidget {
           border: Border.all(color: cs.outlineVariant),
         ),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Icon(icon, size: 18, color: _indigo),
+          Icon(icon, size: 18, color: _brand),
           const SizedBox(height: 8),
           TweenAnimationBuilder<double>(
             tween: Tween(end: value.toDouble()),
@@ -501,11 +502,11 @@ class _DoneBodyState extends State<_DoneBody> {
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               gradient: const LinearGradient(
-                colors: [_indigo, _violet],
+                colors: [_brand, _accent],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
-              boxShadow: [BoxShadow(color: _indigo.withValues(alpha: 0.3), blurRadius: 24, offset: const Offset(0, 8))],
+              boxShadow: [BoxShadow(color: _brand.withValues(alpha: 0.3), blurRadius: 24, offset: const Offset(0, 8))],
             ),
             child: const Icon(Icons.check_rounded, size: 44, color: Colors.white),
           ),
@@ -576,8 +577,8 @@ class _SummaryTile extends StatelessWidget {
         Container(
           width: 34,
           height: 34,
-          decoration: BoxDecoration(color: _indigo.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(10)),
-          child: Icon(icon, size: 18, color: _indigo),
+          decoration: BoxDecoration(color: _brand.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(10)),
+          child: Icon(icon, size: 18, color: _brand),
         ),
         const SizedBox(width: 10),
         Expanded(
@@ -614,7 +615,7 @@ class _TimerCard extends StatelessWidget {
     Widget row(IconData icon, String label, String value, {bool strong = false}) => Padding(
           padding: const EdgeInsets.symmetric(vertical: 5),
           child: Row(children: [
-            Icon(icon, size: 16, color: _indigo),
+            Icon(icon, size: 16, color: _brand),
             const SizedBox(width: 10),
             Expanded(child: Text(label, style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant))),
             Text(value,
@@ -627,9 +628,9 @@ class _TimerCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
       decoration: BoxDecoration(
-        color: _indigo.withValues(alpha: 0.05),
+        color: _brand.withValues(alpha: 0.05),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _indigo.withValues(alpha: 0.18)),
+        border: Border.all(color: _brand.withValues(alpha: 0.18)),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text('TIMER',
@@ -656,13 +657,13 @@ class _Pill extends StatelessWidget {
     final tt = Theme.of(context).textTheme;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-      decoration: BoxDecoration(color: _indigo.withValues(alpha: 0.08), borderRadius: BorderRadius.circular(20)),
+      decoration: BoxDecoration(color: _brand.withValues(alpha: 0.08), borderRadius: BorderRadius.circular(20)),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Icon(icon, size: 14, color: _indigo),
+        Icon(icon, size: 14, color: _brand),
         const SizedBox(width: 6),
         Text(text,
             style: tt.labelMedium?.copyWith(
-              color: _indigo,
+              color: _brand,
               fontWeight: FontWeight.w700,
               fontFeatures: const [FontFeature.tabularFigures()],
             )),
@@ -719,7 +720,7 @@ class _Card extends StatelessWidget {
         borderRadius: BorderRadius.circular(24),
         border: Border.all(color: cs.outlineVariant),
         boxShadow: [
-          BoxShadow(color: _indigo.withValues(alpha: 0.08), blurRadius: 40, offset: const Offset(0, 16)),
+          BoxShadow(color: _brand.withValues(alpha: 0.08), blurRadius: 40, offset: const Offset(0, 16)),
         ],
       ),
       child: child,
@@ -735,13 +736,7 @@ class _Backdrop extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DecoratedBox(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Color(0xFFF1F2FF), Color(0xFFF7F8FA), Color(0xFFF6F0FF)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-      ),
+      decoration: const BoxDecoration(gradient: Brand.wash),
       child: SizedBox.expand(child: child),
     );
   }
