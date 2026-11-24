@@ -73,6 +73,36 @@ void main() {
     expect(progress.last.fraction, 1);
   });
 
+  test('a budgeted pass stops on time with many files; the background run reads the rest', () async {
+    final dir = await Directory.systemTemp.createTemp('budget_pass');
+    addTearDown(() => dir.delete(recursive: true));
+    for (var i = 0; i < 400; i++) {
+      File('${dir.path}/note_$i.txt').writeAsStringSync('meeting notes $i');
+      File('${dir.path}/scan_$i.png').writeAsBytesSync([1, 2, 3]);
+    }
+    final store = IndexStore();
+    final engine = SearchEngine();
+    final indexer = Indexer(store, engine, _FakeOcrEngine(delay: const Duration(milliseconds: 20)));
+
+    final sw = Stopwatch()..start();
+    final quick = await indexer.run(
+      roots: [ScanRoot(dir.path, 'test')],
+      skipPaths: const [],
+      onProgress: (_) {},
+      budget: const Duration(seconds: 3),
+      videos: false,
+      quick: true,
+    );
+    expect(sw.elapsed, lessThan(const Duration(seconds: 4))); // the limit is hard
+    expect(quick.found, 800);
+    expect(quick.scanComplete, isTrue);
+    expect(quick.hitTimeLimit, isTrue); // 400 images at 20 ms each can't fit in 3 s
+    expect(quick.remaining, greaterThan(0));
+
+    await indexer.run(roots: const [], skipPaths: const [], scan: false, onProgress: (_) {});
+    expect(store.files.values.where((f) => f.isPending), isEmpty);
+  });
+
   test('every file ends up read: unknown text formats sniffed, binaries settled', () async {
     final dir = await Directory.systemTemp.createTemp('sniff_test');
     addTearDown(() => dir.delete(recursive: true));
@@ -193,6 +223,9 @@ void main() {
 }
 
 class _FakeOcrEngine implements OcrEngine {
+  _FakeOcrEngine({this.delay = Duration.zero});
+  final Duration delay;
+
   @override
   String get name => 'Test OCR';
 
@@ -209,6 +242,8 @@ class _FakeOcrEngine implements OcrEngine {
   Future<String> recognize(String path) async => 'receipt total 42';
 
   @override
-  Future<ImageReading> analyzeImage(String path) async =>
-      const ImageReading('receipt total 42', [ImageLabel('document', 0.9)]);
+  Future<ImageReading> analyzeImage(String path) async {
+    if (delay > Duration.zero) await Future<void>.delayed(delay);
+    return const ImageReading('receipt total 42', [ImageLabel('document', 0.9)]);
+  }
 }

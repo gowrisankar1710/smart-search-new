@@ -515,10 +515,10 @@ class _DoneBodyState extends State<_DoneBody> {
         Text('Ready to search', style: tt.headlineSmall?.copyWith(fontWeight: FontWeight.w800, letterSpacing: -0.4)),
         const SizedBox(height: 6),
         Text('Documents and images read in $secs seconds', style: tt.bodyMedium?.copyWith(color: cs.onSurfaceVariant)),
-        if (summary.deferred > 0) ...[
+        if (summary.deferred + summary.remaining > 0) ...[
           const SizedBox(height: 4),
           Text(
-            '${formatCount(summary.deferred)} large ${summary.deferred == 1 ? 'file is' : 'files are'} read next, in the background',
+            '${formatCount(summary.deferred + summary.remaining)} more ${summary.deferred + summary.remaining == 1 ? 'file is' : 'files are'} read next, in the background',
             style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant),
           ),
         ],

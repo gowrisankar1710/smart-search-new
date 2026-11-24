@@ -82,6 +82,7 @@ class IndexSummary {
     required this.filesPerSecond,
     required this.hitTimeLimit,
     this.deferred = 0,
+    this.scanComplete = true,
   });
   final int found;
   final int analysed;
@@ -92,6 +93,9 @@ class IndexSummary {
 
   /// Large files left for the background run (quick passes only).
   final int deferred;
+
+  /// False when the time limit cut the disk walk short: a full scan should follow.
+  final bool scanComplete;
 }
 
 /// Time-budgeted indexing pipeline.
@@ -226,6 +230,7 @@ class Indexer {
         quick && f.size > quickReadBytes(f.ext, ocr: ocr);
     final analysisClock = Stopwatch();
     var lastEmit = DateTime(2000);
+    var scanComplete = true;
 
     void emit({bool force = false}) {
       if (analysed > 0) unsaved = store.dirty = true;
@@ -321,6 +326,7 @@ class Indexer {
           if (timeUp()) break;
         }
         scanTimer?.cancel();
+        scanComplete = fs.completed;
         // Forget files that were deleted – only when discovery covered everything.
         if (fs.completed && !_cancelled) {
           final rootPaths = [for (final r in roots) r.path];
@@ -727,6 +733,7 @@ class Indexer {
       filesPerSecond: analysed / secs,
       hitTimeLimit: deadline != null && left > 0,
       deferred: deferred.where((f) => f.isPending).length,
+      scanComplete: scanComplete,
     );
   }
 }

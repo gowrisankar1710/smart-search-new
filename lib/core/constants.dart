@@ -4,6 +4,13 @@ import 'dart:io';
 /// If discovery finishes sooner, content reading automatically gets the rest.
 const double kScanShare = 0.35;
 
+/// Hard limit for the analysis behind the Timer screen (first launch, re-analysis, new
+/// folders), on every platform and whatever the number of files: it must be done before
+/// 3 minutes, so it stops 10 s short to leave room for stopping readers and wrapping up.
+/// Videos aren't part of it; files not read by then are read in the background next.
+/// Not shown in the app.
+const Duration kAnalysisBudget = Duration(minutes: 2, seconds: 50);
+
 /// Upper bound on files discovered per run.
 const int kMaxFiles = 400000;
 

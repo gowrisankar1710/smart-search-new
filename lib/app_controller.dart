@@ -553,11 +553,13 @@ class AppController extends ChangeNotifier {
       roots: only ?? personalRoots,
       skipPaths: Locations.skipPaths(),
       onProgress: onProgress,
+      budget: kAnalysisBudget, // hard limit, any number of files; the rest follows in the background
       videos: false,
       quick: true, // large files follow in the background, smallest first
     );
-    // Drives next: the background scan starts as soon as Search is open.
-    if (only == null && hasWholeDrives) _lastAutoScan = DateTime(2000);
+    // Drives next – or the rest of the folders, if the time limit cut the disk walk
+    // short: the background scan starts as soon as Search is open.
+    if ((only == null && hasWholeDrives) || !summary.scanComplete) _lastAutoScan = DateTime(2000);
     store
       ..lastIndexTime = summary.elapsed
       ..lastIndexAt = DateTime.now();
