@@ -337,7 +337,7 @@ class _Sidebar extends StatelessWidget {
             child: Row(children: [
               const _Logo(),
               const SizedBox(width: 10),
-              Text('Smart Search', style: tt.titleMedium?.copyWith(fontWeight: FontWeight.w700, letterSpacing: -0.2)),
+              const AppName(size: 21),
             ]),
           ),
           Expanded(
@@ -598,7 +598,7 @@ class _CompactHeader extends StatelessWidget {
       child: Row(children: [
         const _Logo(),
         const SizedBox(width: 10),
-        Text('Smart Search', style: tt.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+        const AppName(size: 21),
         const Spacer(),
         Text(controller.showReading ? _readingLine(controller, s.pending) : '${formatCount(s.total)} files',
             style: tt.labelMedium?.copyWith(color: cs.onSurfaceVariant)),

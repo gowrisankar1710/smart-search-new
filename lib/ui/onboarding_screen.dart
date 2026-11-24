@@ -114,7 +114,7 @@ class _Hero extends StatelessWidget {
       Row(children: [
         const BrandMark(size: 40),
         const SizedBox(width: 12),
-        Text('Smart Search', style: tt.titleMedium?.copyWith(fontWeight: FontWeight.w700, letterSpacing: -0.2)),
+        const AppName(size: 24),
       ]),
       const SizedBox(height: 36),
       Text.rich(

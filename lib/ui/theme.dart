@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../core/constants.dart';
 import '../core/file_types.dart';
 
 /// App colours: sky blue and teal on white.
@@ -35,6 +36,25 @@ abstract final class Brand {
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,
   );
+}
+
+/// The app name in its own lettering, filled with the brand gradient.
+class AppName extends StatelessWidget {
+  const AppName({super.key, this.size = 20});
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return ShaderMask(
+      blendMode: BlendMode.srcIn,
+      shaderCallback: (r) => const LinearGradient(colors: [Brand.blue, Brand.teal]).createShader(r),
+      child: Text(
+        kAppName,
+        maxLines: 1,
+        style: TextStyle(fontFamily: 'Righteous', fontSize: size, height: 1.1, letterSpacing: 0.4, color: Colors.white),
+      ),
+    );
+  }
 }
 
 /// The app mark: a rounded blue-to-teal tile with a search glyph.

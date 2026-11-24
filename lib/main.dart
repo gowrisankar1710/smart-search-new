@@ -3,6 +3,7 @@ import 'dart:ui' show AppExitResponse;
 import 'package:flutter/material.dart';
 
 import 'app_controller.dart';
+import 'core/constants.dart';
 import 'ui/home_screen.dart';
 import 'ui/onboarding_screen.dart';
 import 'ui/theme.dart';
@@ -31,7 +32,7 @@ class SmartSearchApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Smart File Search',
+      title: kAppName,
       debugShowCheckedModeBanner: false,
       theme: buildTheme(Brightness.light),
       themeMode: ThemeMode.light,

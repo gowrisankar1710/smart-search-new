@@ -1,5 +1,8 @@
 import 'dart:io';
 
+/// The app's name, as shown in the window title, the header and the system's app lists.
+const String kAppName = 'Abracadabra';
+
 /// Share of an indexing budget (when one is given) the file-discovery phase may use before content reading starts.
 /// If discovery finishes sooner, content reading automatically gets the rest.
 const double kScanShare = 0.35;

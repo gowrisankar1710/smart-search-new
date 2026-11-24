@@ -27,7 +27,7 @@
 	<key>NSMainNibFile</key>
 	<string>MainMenu</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Smart Search transcribes the speech in your videos on this Mac so you can search what is said and jump straight to that moment. Audio never leaves your device.</string>
+	<string>Abracadabra transcribes the speech in your videos on this Mac so you can search what is said and jump straight to that moment. Audio never leaves your device.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 </dict>

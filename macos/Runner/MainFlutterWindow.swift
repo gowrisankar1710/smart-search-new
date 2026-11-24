@@ -17,7 +17,7 @@ class MainFlutterWindow: NSWindow {
     self.contentViewController = flutterViewController
     self.setFrame(windowFrame, display: true)
     self.minSize = NSSize(width: 520, height: 480)
-    self.title = "Smart Search"
+    self.title = "Abracadabra"
 
     RegisterGeneratedPlugins(registry: flutterViewController)
     VisionOcr.register(with: flutterViewController.engine.binaryMessenger)

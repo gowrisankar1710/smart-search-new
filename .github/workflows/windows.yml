@@ -39,32 +39,32 @@ jobs:
 
       - uses: actions/upload-artifact@v5
         with:
-          name: smart_file_search-windows
+          name: Abracadabra-windows
           path: build/windows/x64/runner/Release/
           if-no-files-found: error
 
       # Also a GitHub Release: a public link that downloads without signing in.
-      # The newest is always at …/releases/latest/download/smart_file_search-windows.zip
+      # The newest is always at …/releases/latest/download/Abracadabra-windows.zip
       - name: Publish release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath smart_file_search-windows.zip
+          Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath Abracadabra-windows.zip
           $sha = "${{ github.sha }}".Substring(0, 7)
-          gh release create "windows-${{ github.run_number }}" smart_file_search-windows.zip `
+          gh release create "windows-${{ github.run_number }}" Abracadabra-windows.zip `
             --target "${{ github.sha }}" `
             --title "Windows build ${{ github.run_number }} ($sha)" `
-            --notes "Unzip and run smart_file_search.exe – keep the whole folder together. Built from commit $sha." `
+            --notes "Unzip and run Abracadabra.exe – keep the whole folder together. Built from commit $sha." `
             --latest
           # Shown on the run's page, also to visitors who aren't signed in (artifacts aren't).
-          $url = "${{ github.server_url }}/${{ github.repository }}/releases/download/windows-${{ github.run_number }}/smart_file_search-windows.zip"
+          $url = "${{ github.server_url }}/${{ github.repository }}/releases/download/windows-${{ github.run_number }}/Abracadabra-windows.zip"
           @(
             "## Download (no sign-in needed)",
             "",
-            "**[smart_file_search-windows.zip]($url)** – build ${{ github.run_number }}, commit $sha",
+            "**[Abracadabra-windows.zip]($url)** – build ${{ github.run_number }}, commit $sha",
             "",
-            "Newest build, always: ${{ github.server_url }}/${{ github.repository }}/releases/latest/download/smart_file_search-windows.zip",
+            "Newest build, always: ${{ github.server_url }}/${{ github.repository }}/releases/latest/download/Abracadabra-windows.zip",
             "",
-            "Unzip and run ``smart_file_search.exe`` – keep the whole folder together."
+            "Unzip and run ``Abracadabra.exe`` – keep the whole folder together."
           ) -join "`n" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append

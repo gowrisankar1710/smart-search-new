@@ -737,7 +737,102 @@ class _Backdrop extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: const BoxDecoration(gradient: Brand.wash),
-      child: SizedBox.expand(child: child),
+      child: Stack(fit: StackFit.expand, children: [
+        const RepaintBoundary(child: CustomPaint(painter: _SearchPattern())),
+        child,
+      ]),
     );
   }
+}
+
+/// Faint search-themed pattern over the whole page: file and search icons with the
+/// kind of words people look for, scattered on a jittered grid. Same layout every
+/// time (fixed seed), so it doesn't jump when the window resizes a little.
+class _SearchPattern extends CustomPainter {
+  const _SearchPattern();
+
+  static const _icons = <IconData>[
+    Icons.search_rounded,
+    Icons.description_outlined,
+    Icons.picture_as_pdf_outlined,
+    Icons.image_outlined,
+    Icons.folder_outlined,
+    Icons.text_snippet_outlined,
+    Icons.table_chart_outlined,
+    Icons.slideshow_outlined,
+    Icons.receipt_long_outlined,
+    Icons.manage_search_rounded,
+    Icons.photo_library_outlined,
+    Icons.find_in_page_outlined,
+  ];
+
+  static const _words = <String>[
+    'invoice 2024',
+    'receipt total',
+    'meeting notes',
+    'passport.pdf',
+    'holiday photos',
+    'contract signed',
+    'budget.xlsx',
+    'project plan',
+    'tax return',
+    'resume',
+    'whiteboard',
+    'bank statement',
+    'pitch deck',
+    'lecture slides',
+    'warranty card',
+    'recipe',
+  ];
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rnd = math.Random(7);
+    const cell = 150.0;
+    final cols = (size.width / cell).ceil() + 1;
+    final rows = (size.height / cell).ceil() + 1;
+    var n = 0;
+    for (var r = 0; r < rows; r++) {
+      for (var c = 0; c < cols; c++) {
+        final x = c * cell + (r.isOdd ? cell / 2 : 0) + (rnd.nextDouble() - 0.5) * 50;
+        final y = r * cell + (rnd.nextDouble() - 0.5) * 50;
+        final tilt = (rnd.nextDouble() - 0.5) * 0.5;
+        final color = (n.isEven ? Brand.blue : Brand.teal).withValues(alpha: 0.10 + rnd.nextDouble() * 0.06);
+        final TextPainter tp;
+        if (n % 3 == 2) {
+          // A search chip: magnifier + words.
+          final word = _words[rnd.nextInt(_words.length)];
+          tp = TextPainter(
+            textDirection: TextDirection.ltr,
+            text: TextSpan(children: [
+              TextSpan(
+                text: String.fromCharCode(Icons.search_rounded.codePoint),
+                style: TextStyle(fontFamily: Icons.search_rounded.fontFamily, fontSize: 16, color: color),
+              ),
+              TextSpan(text: ' $word', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: color)),
+            ]),
+          )..layout();
+        } else {
+          final icon = _icons[rnd.nextInt(_icons.length)];
+          tp = TextPainter(
+            textDirection: TextDirection.ltr,
+            text: TextSpan(
+              text: String.fromCharCode(icon.codePoint),
+              style: TextStyle(fontFamily: icon.fontFamily, fontSize: 26 + rnd.nextDouble() * 18, color: color),
+            ),
+          )..layout();
+        }
+        canvas
+          ..save()
+          ..translate(x, y)
+          ..rotate(tilt);
+        tp.paint(canvas, Offset(-tp.width / 2, -tp.height / 2));
+        canvas.restore();
+        n++;
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_SearchPattern oldDelegate) => false;
 }

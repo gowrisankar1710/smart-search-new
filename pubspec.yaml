@@ -27,6 +27,11 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  # The app name's lettering (SIL Open Font License, assets/fonts/Righteous-OFL.txt).
+  fonts:
+    - family: Righteous
+      fonts:
+        - asset: assets/fonts/Righteous-Regular.ttf
   # Tesseract "fast" models (Apache-2.0, github.com/tesseract-ocr/tessdata_fast):
   # Hindi and Tamil text in pictures, scanned PDFs and videos.
   # Hindi and Tamil reading is off for now (IndicText.enabled in ocr_service.dart).

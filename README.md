@@ -1,12 +1,12 @@
-# Smart File Search (Flutter)
+# Abracadabra (Flutter)
 
 Find any file by **what's inside it**: file names, folder names, document text (PDF, Word, Excel, PowerPoint, ODF, RTF, text/code) and **text inside images** (OCR). Typos, partial names and related words all work. Everything runs on the device.
 
 ## Download for Windows
 
-**[Download the latest Windows build](https://github.com/gowrisankar1710/smart-search-new/releases/latest/download/smart_file_search-windows.zip)** (zip, no GitHub sign-in needed) · [all builds](https://github.com/gowrisankar1710/smart-search-new/releases)
+**[Download the latest Windows build](https://github.com/gowrisankar1710/smart-search-new/releases/latest/download/Abracadabra-windows.zip)** (zip, no GitHub sign-in needed) · [all builds](https://github.com/gowrisankar1710/smart-search-new/releases)
 
-Unzip it and run `smart_file_search.exe`; keep the whole folder together. A new build is published automatically for every push to `main`.
+Unzip it and run `Abracadabra.exe`; keep the whole folder together. A new build is published automatically for every push to `main`.
 
 ## Quick start
 
@@ -44,7 +44,7 @@ BM25 on content, IDF-weighted name matches, prefix completion (`invo` → invoic
 | Platform | What can be searched | OCR |
 |---|---|---|
 | **Android** | All of internal storage + SD card after **"All files access"** (`MANAGE_EXTERNAL_STORAGE`). If refused, photos and videos only (Android 13+). On Google Play, this permission needs a policy declaration; "file search" is an accepted use. | ML Kit, on-device |
-| **iOS** | Sandbox rules: the app's own folder (shown in Files › *On My iPhone › Smart Search*) plus folders the user picks with **Add folder** (Files, iCloud Drive). iOS grants access to a picked folder for the current session, so re-pick after relaunch, or copy files into the app folder. | ML Kit, on-device (iOS 15.5+) |
+| **iOS** | Sandbox rules: the app's own folder (shown in Files › *On My iPhone › Abracadabra*) plus folders the user picks with **Add folder** (Files, iCloud Drive). iOS grants access to a picked folder for the current session, so re-pick after relaunch, or copy files into the app folder. | ML Kit, on-device (iOS 15.5+) |
 | **Windows** | User folders, OneDrive, every drive letter (system folders skipped) | Windows OCR, on-device |
 | **macOS** | Home folders, iCloud Drive, `/Volumes/*`. Sandbox is disabled for direct distribution (not the Mac App Store); macOS asks once per protected folder. | Apple Vision, on-device |
 | **Linux** | Home, `/media`, `/mnt` | `apt install tesseract-ocr` |
